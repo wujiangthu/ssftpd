@@ -1,2 +1,1 @@
-
-Ssftpd is a high performance and very secure ftp server, based on nginx. Instead of creaeting a new process serving each ftp request, which is adopted by other ftp servers, ssftpd use io mutiplexing such epoll, kqueue, select, poll, dev/poll to deal with the incoming requests, saving a lot of memory resource and running time.
+   Ssftpd is a high performance and very secure ftp server, based on nginx. Instead of creaeting a new process serving each ftp request, which is adopted by other ftp servers, ssftpd use io mutilplexing such as epoll, kqueue, select, poll, dev/poll to deal with the incoming requests, saving a lot of memory resource and running time.
