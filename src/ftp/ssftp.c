@@ -285,7 +285,7 @@ ss_ftp_parse_command(ss_ftp_request *r)
 
       case state_skip_telnet_chars:
 
-           /*  skip telnet control chars */
+           /*  skip telnet control characters */
 
 	   if (0 == stcs) {
 
@@ -316,14 +316,14 @@ ss_ftp_parse_command(ss_ftp_request *r)
 
 	   } else {
 
-	      /* comand name char, continue */ 
+	      /* comand name character, continue */ 
 	   }
 
 	   break;
       
       case state_space_before_arg:
 
-           /* skip SPACEs before arg */
+           /* skip SPACEs before argument */
 
            if ('\r' == ch) {
 	      state =state_almost_done;    
@@ -346,12 +346,12 @@ ss_ftp_parse_command(ss_ftp_request *r)
 	   if (' ' == ch) {
 	      state = state_space_before_arg; 
 
-	   } else if ('\r == ch') {
+	   } else if ('\r' == ch) {
 	      state = state_almost_done;
 
 	   } else {
 	     
-	     /*  arguments character  */ 
+	     /*  argument character  */ 
 
 	     break;
 	   }
@@ -435,6 +435,7 @@ ss_ftp_write(ss_ftp_request *r, ngx_chain_t *current_chain, ngx_chain_t *in)
       ll = &r->data_link_write; 
 
    } else {
+
       /* TODO : error handling  */ 
    }
 
