@@ -4,29 +4,45 @@
  */
 
 
+#ifndef _SSFTP_C_
+#define _SSFTP_C_
+
+
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
+#include <ctype.h>
+
+#include "ssftp.h"
+#include "ss_ftp_cmd.h"
+#include "ss_ftp_cmd.c"
+#include "ss_ftp_reply.c"
+
+#define  SS_AGAIN                         NGX_AGAIN
+#define  SS_ERROR                         NGX_ERROR
+#define  SS_FTP_PARSE_ONE_COMMAND_DONE    1
+#define  SS_FTP_INVALID_COMMAND           2
+
+#define SS_FTP_REQUEST_DEFAULT_POOL_SIZE  1024*10
+#define SS_FTP_CMD_DEFAULT_BUF_LEN        1024
 
 
-typedef struct ss_ftp_request {
-  ngx_connection_t  *connection;
-  ngx_pool_t        *pool;
+void ss_ftp_init_connection(ngx_connection_t *c);
+static void ss_ftp_init_request(ngx_event_t *rev);
+static void ss_ftp_process_cmds(ngx_event_t *rev);
+static ngx_int_t ss_ftp_read_data(ss_ftp_request *r);
+static ngx_int_t ss_ftp_parse_command(ss_ftp_request *r);
+static ngx_int_t ss_ftp_process_command(ss_ftp_request *r); 
+static void ss_to_lower(u_char *str, ngx_int_t len);
+void ss_ftp_cmd_link_write(ngx_event_t *send);
+void ss_ftp_data_link_write(ngx_event_t *send);
+void ss_ftp_cmd_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain);
+void ss_ftp_data_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain);
+static void ss_ftp_write(ss_ftp_request *r, ngx_chain_t *current_chain, ngx_chain_t *in);
 
-  ngx_int_t         *state;
-  u_char            *cmd_name_start; 
-  u_char            *cmd_name_end; 
-  u_char            *cmd_arg_start; 
-  u_char            *cmd_arg_end; 
-  ngx_array_s       *cmd_args; 
-  ngx_buf_t         *cmd_buf
-
-  ngx_chain_t       *cmd_link_write;
-  ngx_chain_t       *data_link_write
-} ss_ftp_request;
 
 void 
-ss_ftp_init_connection (ngx_connection_t *c)
+ss_ftp_init_connection(ngx_connection_t *c)
 {
   ngx_event_t *rev;
   ngx_event_t *send;
@@ -39,7 +55,13 @@ ss_ftp_init_connection (ngx_connection_t *c)
   ngx_handle_read_event(rev, 0);
   ngx_handle_write_event(send, 0);
 
+  /* Welcome message  */
+  char welcome[] = "220 hello, my friend. SSftp welcome you!\r\n";
+  int rc = write(c->fd, welcome, strlen(welcome) -1);
+  rc++;
+  //ss_ftp_reply(r, "hello, my friend. SSftp welcome you!");
   //ss_ftp_init_request(rev);
+  ss_ftp_create_commands_hash_table(c->pool); 
 }
 
 static void
@@ -55,10 +77,14 @@ ss_ftp_init_request(ngx_event_t *rev)
   r->pool = ngx_create_pool(SS_FTP_REQUEST_DEFAULT_POOL_SIZE, c->log);
   /* TODO : error handling  */
   
+  r->connection = c;
   r->state = 0;
-  r->cmd_buf = ngx_pcalloc(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
+  r->cmd_buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
+
   r->cmd_link_write = ngx_pcalloc(r->pool, sizeof(ngx_chain_t)); 
-  r->cmd_link_write->buf = ngx_pcalloc(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
+  r->cmd_link_write->buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
+  r->cmd_link_write->next = NULL;
+
   r->cmd_args = ngx_array_create(r->pool, 10, sizeof(ngx_str_t));
   /* TODO : initialize r */
 
@@ -94,7 +120,7 @@ ss_ftp_process_cmds(ngx_event_t *rev)
 
      /* TODO :error handling */
 
-      if (SS_FTP_PARSE_INVALID_COMMAND == rc) {
+      if (SS_FTP_INVALID_COMMAND == rc) {
 
           /*  TODO : hanlde invalid command */ 
 
@@ -105,7 +131,7 @@ ss_ftp_process_cmds(ngx_event_t *rev)
   }
 }
 
-ngx_int_t
+static ngx_int_t
 ss_ftp_read_data(ss_ftp_request *r)
 {
 
@@ -144,6 +170,7 @@ ss_ftp_read_data(ss_ftp_request *r)
 
       /* TODO : error handling  */
 
+      return SS_ERROR; 
    }
 
    r->cmd_buf->last += n;
@@ -151,14 +178,14 @@ ss_ftp_read_data(ss_ftp_request *r)
    return n;
 }
 
-ngx_int_t
+static ngx_int_t
 ss_ftp_parse_command(ss_ftp_request *r) 
 {
    enum {
          state_start,
 	 state_skip_telnet_chars,
 	 state_name,
-	 state_space_before_agr,
+	 state_space_before_arg,
 	 state_arg,
 	 state_almost_done,
 	 state_done
@@ -171,16 +198,13 @@ ss_ftp_parse_command(ss_ftp_request *r)
    ngx_str_t *arg;
    ngx_buf_t *buf = r->cmd_buf;
    for (p = buf->pos; p < buf->last; p++) {
-
-       if (state_done == state) {
-          break; 
-       }
-
        ch = *p;
 
       switch (state) {
         
       case state_start:
+          /* roll back */
+           p--; 
            state = state_skip_telnet_chars;
 	   break;
 
@@ -251,16 +275,16 @@ ss_ftp_parse_command(ss_ftp_request *r)
 	      state = state_almost_done;
 
 	   } else {
-	     
+
 	     /*  argument character  */ 
 
 	     break;
 	   }
 
 	   r->cmd_arg_end = p-1;
-	   arg = (ngx_str_t *) ngx_array_push(cmd_args);
-	   arg->data = cmd_arg_start;
-	   arg->len  = cmd_arg_end - cmd_arg_start + 1;
+	   arg = (ngx_str_t *) ngx_array_push(r->cmd_args);
+	   arg->data = r->cmd_arg_start;
+	   arg->len  = r->cmd_arg_end - r->cmd_arg_start + 1;
 
 	   break;
 
@@ -270,17 +294,34 @@ ss_ftp_parse_command(ss_ftp_request *r)
            
 	   if ('\n' == ch) {
                state = state_done;
+
+               /* update command buffer pointer  */
+               r->cmd_buf->pos = p + 1;
+
 	       break;
 	   }
 
 	   return SS_FTP_INVALID_COMMAND;
+
+      case state_done:
+           goto done;           
+
+      default :
+
+           /* error handling  */
+
+           break; 
     }
   }
+
+
+done:
 
   r->state = state;
   r->skipped_tel_chars = stcs;
 
   if (state_done == state) {
+      r->state = state_start;
       return SS_FTP_PARSE_ONE_COMMAND_DONE; 
 
   } else {
@@ -289,7 +330,7 @@ ss_ftp_parse_command(ss_ftp_request *r)
 
 }
 
-ngx_int_t
+static ngx_int_t
 ss_ftp_process_command(ss_ftp_request *r) 
 {
    ss_ftp_command *sfcmd;
@@ -301,33 +342,80 @@ ss_ftp_process_command(ss_ftp_request *r)
    cmd_len  = r->cmd_name_end - r->cmd_name_start +1;
 
    key = ngx_hash_key_lc(cmd_name, cmd_len);
+   ss_to_lower(cmd_name, cmd_len);
    sfcmd = (ss_ftp_command *) ngx_hash_find(ss_ftp_cmds_hash_table,
                                             key,
 			                    cmd_name,
 			                    cmd_len);
    sfcmd->execute(r);
+  
+   return NGX_OK;
+
+   /* handler return value  */
 } 
 
-void 
-ss_ftp_cmd_link_write(ss_ftp_request *r)
+static void 
+ss_to_lower(u_char *str, ngx_int_t len)
 {
-  ss_ftp_write(r, r->cmd_link_write, NULL); 
+   ngx_int_t count = 0;
+
+   if (NULL == str) {
+      return; 
+
+   } else {
+      for (count = 0; count < len; count++) {
+          str[count] = tolower(str[count]); 
+      }
+   }
 }
 
 void 
-ss_ftp_data_link_write(ss_ftp_request *r)
+ss_ftp_cmd_link_write(ngx_event_t *send)
 {
-  ss_ftp_write(r, r->data_link_write, NULL); 
+   ngx_connection_t  *c;
+   ss_ftp_request    *r;
+
+   c = (ngx_connection_t *) send->data;
+   r = (ss_ftp_request *) c->data;
+
+   ss_ftp_write(r, r->cmd_link_write, NULL); 
+}
+
+void 
+ss_ftp_data_link_write(ngx_event_t *send)
+{
+   ngx_connection_t  *c;
+   ss_ftp_request    *r;
+
+   c = (ngx_connection_t *) send->data;
+   r = (ss_ftp_request *) c->data;
+
+   ss_ftp_write(r, r->data_link_write, NULL); 
 }
 
 void
+ss_ftp_cmd_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain)
+{
+   ss_ftp_write(r, r->cmd_link_write, chain);
+}
+
+void
+ss_ftp_data_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain)
+{
+   ss_ftp_write(r, r->data_link_write, chain);
+}
+
+
+static void
 ss_ftp_write(ss_ftp_request *r, ngx_chain_t *current_chain, ngx_chain_t *in)
 {
-   ngx_chain_t   *ll;
-   ngx_chain_t   *fl;
-   ngx_chain_t   *temp;
-   ngx_chain_t   *temp2;
-   ngx_chain_t   *chain;
+   ngx_chain_t       **ll;
+   ngx_chain_t       **fl;
+   ngx_chain_t       *temp;
+   ngx_chain_t       *temp2;
+   ngx_chain_t       *chain;
+   ngx_connection_t  *c;
+   ngx_event_t       *send;
 
    if (current_chain == r->cmd_link_write) {
       ll = &r->cmd_link_write; 
@@ -336,6 +424,10 @@ ss_ftp_write(ss_ftp_request *r, ngx_chain_t *current_chain, ngx_chain_t *in)
       ll = &r->data_link_write; 
 
    } else {
+
+      /* just for passing compilation  */
+
+      ll = &r->data_link_write; 
 
       /* TODO : error handling  */ 
    }
@@ -348,6 +440,7 @@ ss_ftp_write(ss_ftp_request *r, ngx_chain_t *current_chain, ngx_chain_t *in)
 
    *ll = in;
 
+   c = (ngx_connection_t *) r->connection;
    chain = c->send_chain(c, *fl, 0);
 
    for (temp = *fl; temp && temp != chain; /* void */){
@@ -358,5 +451,14 @@ ss_ftp_write(ss_ftp_request *r, ngx_chain_t *current_chain, ngx_chain_t *in)
 
    *fl = temp;
    
+   send = c->write;
+   ngx_handle_write_event(send, 0);
+
+   /* check whether it is suitable to put it here  */
+   /* error handling  */
+
    return;
 }
+
+
+#endif /* _SSFTP_C  */

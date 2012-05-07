@@ -4,20 +4,23 @@
  */
 
 
+#ifndef _SS_FTP_CMD_C_
+#define _SS_FTP_CMD_C_
+
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
+#include "ss_ftp_cmd.h"
+#include "ss_ftp_reply.h"
+#include "ss_ftp_reply.c"
 
+#define ss_merge(x,y)  x##y
 
-typedef struct ss_ftp_command {
-  ngx_str_t   name;
-  ngx_unit_t  type;
-  void        (*execute)(ss_ftp_request *r)
-} ss_ftp_command;
+void ss_ftp_create_commands_hash_table(ngx_pool_t *pool); 
+static void ss_ftp_user(ss_ftp_request *r);
+static void ss_ftp_pass(ss_ftp_request *r);
+static void ss_ftp_quit(ss_ftp_request *r);
 
-#define ss_null_command { ngx_string(""),  \
-                          NGX_CONF_NOARGS, \
-			  null }
 
 static ss_ftp_command ss_ftp_commands[] = {
        
@@ -55,7 +58,7 @@ static ss_ftp_command ss_ftp_commands[] = {
        ss_ftp_quit },
 
      { ngx_string("PASV"),
-       NGX_CONF_TAKE!,
+       NGX_CONF_TAKE1,
        ss_ftp_quit },
 
      { ngx_string("PORT"),
@@ -74,15 +77,25 @@ static ss_ftp_command ss_ftp_commands[] = {
        ss_null_command
 };
 
-void
+static void
 ss_ftp_user(ss_ftp_request *r)
+{
+   ss_ftp_reply(r, USER_NAME_OK_NEED_PASSWORD);
+}
+
+static void
+ss_ftp_pass(ss_ftp_request *r)
+{
+   ss_ftp_reply(r, USER_LOGGED_IN);
+}
+
+static void
+ss_ftp_quit(ss_ftp_request *r)
 {
 }
 
-ngx_hash_t *ss_ftp_cmds_hash_table;
-
 void
-ss_create_commands_hash_table(ngx_pool_t *pool) {
+ss_ftp_create_commands_hash_table(ngx_pool_t *pool) {
      ngx_hash_init_t    *hash_init;
      ngx_array_t        *ss_ftp_cmds_array;
 
@@ -92,7 +105,7 @@ ss_create_commands_hash_table(ngx_pool_t *pool) {
                                                          sizeof(ngx_hash_t));
      hash_init->hash        = ss_ftp_cmds_hash_table;
      hash_init->key         = &ngx_hash_key_lc;
-     hash_init->max_size    = 100;
+     hash_init->max_size    = 1024 * 10;
      hash_init->bucket_size = 64;
      hash_init->name        = "ss_ftp_command_hash";
      hash_init->pool        = pool;
@@ -100,7 +113,7 @@ ss_create_commands_hash_table(ngx_pool_t *pool) {
 
      int arr_size = sizeof(ss_ftp_commands) / sizeof(ss_ftp_command) -1;
      int count;
-     ngx_hash__key_t *arr_node;
+     ngx_hash_key_t *arr_node;
      ss_ftp_cmds_array = ngx_array_create(pool, 
                                           arr_size, 
 					  sizeof(ngx_hash_key_t)); 
@@ -118,3 +131,6 @@ ss_create_commands_hash_table(ngx_pool_t *pool) {
                    (ngx_hash_key_t *) ss_ftp_cmds_array->elts,
 		   ss_ftp_cmds_array->nelts);
 }
+
+
+#endif  /* _SS_FTP_CMD_C_  */
