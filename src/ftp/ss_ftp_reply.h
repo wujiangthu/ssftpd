@@ -13,7 +13,7 @@
 #include <ngx_event.h>
 
 
-void ss_ftp_reply(ss_ftp_request *r, const char *reply_code);
+void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message);
 
 
 /* 
@@ -30,14 +30,24 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code);
  *  Positive Completion Replies  
  */
 
-#define COMMAND_OK                 "200 Command ok.\r\n" 
-#define COMMAND_NOT_IMPLEMENTED    "202 Command not implemented.\r\n" 
-#define SERVICE_READY              "220 Service is ready.\r\n" 
-#define USER_LOGGED_IN             "230 Logged in.\r\n" 
-#define USER_LOGGED_OUT            "231 Logged out.\r\n" 
-#define USER_DELAYED_LOGGED_OUT    "232 Logged out command received,   \ 
-                                        will complete when transfer done.\r\n" 
-#define PATH_CREATED               "257 Path created.\r\n"    
+#define COMMAND_OK                 "200" 
+#define COMMAND_OK_M                 "Command ok." 
+#define COMMAND_NOT_IMPLEMENTED    "202" 
+#define COMMAND_NOT_IMPLEMENTED_M    "Command not implemented." 
+#define SERVICE_READY              "220" 
+#define SERVICE_READY_M              "Service is ready." 
+#define ENTERING_PASSIVE_MODE      "227" 
+#define ENTERING_PASSIVE_MODE_M     "Entering Passive Mode." 
+#define USER_LOGGED_IN             "230" 
+#define USER_LOGGED_IN             "230" 
+#define USER_LOGGED_IN_M             "Logged in." 
+#define USER_LOGGED_OUT            "231" 
+#define USER_LOGGED_OUT_M            "Logged out." 
+#define USER_DELAYED_LOGGED_OUT    "232"
+#define USER_DELAYED_LOGGED_OUT_M    "Logged out command received, \
+                                        will complete when transfer done." 
+#define PATH_CREATED               "257"    
+#define PATH_CREATED_M               "Path created."    
 
 /* 
  *  3XX
@@ -45,8 +55,10 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code);
  *  Positive Intermediate Replies  
  */
 
-#define USER_NAME_OK_NEED_PASSWORD "331 Need password.\r\n" 
-#define NEED_ACCOUNT               "332 Need account.\r\n" 
+#define USER_NAME_OK_NEED_PASSWORD "331" 
+#define USER_NAME_OK_NEED_PASSWORD_M "Need password." 
+#define NEED_ACCOUNT               "332" 
+#define NEED_ACCOUNT_M               "Need account." 
 
 
 /*
@@ -55,8 +67,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code);
  *  Transient Negative Replies  
  */
 
-#define INVALID_USERNAME_PASSWORD  "430 Invalid username or password.\r\n" 
-#define HOST_UNAVAILABLE           "434 Requested host unavailable.\r\n" 
+#define INVALID_USERNAME_PASSWORD  "430 Invalid username or password." 
+#define HOST_UNAVAILABLE           "434 Requested host unavailable." 
 
 
 /*
@@ -65,8 +77,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code);
  *  Permanent Negative Completion Replies  
  */
 
-#define COMMAND_SYNTAX_ERROR       "500 Syntax error,command unrecognized.\r\n" 
-#define ARGUMENT_SYNTAX_ERROR      "501 Arguments syntax error.\r\n" 
+#define COMMAND_SYNTAX_ERROR       "500 Syntax error,command unrecognized." 
+#define ARGUMENT_SYNTAX_ERROR      "501 Arguments syntax error." 
 
 
 #endif /* _SS_FTP_REPLY_H_  */

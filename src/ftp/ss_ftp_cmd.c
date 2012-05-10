@@ -10,16 +10,25 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
+//#include <sys/socket.h>
+//#include <sys/types.h>
+#include "ssftp.h"
+#include "ssftp.c"
 #include "ss_ftp_cmd.h"
 #include "ss_ftp_reply.h"
 #include "ss_ftp_reply.c"
 
 #define ss_merge(x,y)  x##y
 
+
 void ss_ftp_create_commands_hash_table(ngx_pool_t *pool); 
+void ss_ftp_undefined_cmd(ss_ftp_request *r); 
 static void ss_ftp_user(ss_ftp_request *r);
 static void ss_ftp_pass(ss_ftp_request *r);
 static void ss_ftp_quit(ss_ftp_request *r);
+static void ss_ftp_pasv(ss_ftp_request *r);
+static void ss_ftp_type(ss_ftp_request *r);
+static void ss_ftp_pwd(ss_ftp_request *r);
 
 
 static ss_ftp_command ss_ftp_commands[] = {
@@ -59,7 +68,7 @@ static ss_ftp_command ss_ftp_commands[] = {
 
      { ngx_string("PASV"),
        NGX_CONF_TAKE1,
-       ss_ftp_quit },
+       ss_ftp_pasv },
 
      { ngx_string("PORT"),
        NGX_CONF_TAKE1,
@@ -67,31 +76,100 @@ static ss_ftp_command ss_ftp_commands[] = {
 
      { ngx_string("TYPE"),
        NGX_CONF_TAKE1,
-       ss_ftp_quit },
+       ss_ftp_type },
 
 
    /* 
     *  FTP SERVICE COMMANDS 
     */
 
+     { ngx_string("PWD"),
+       NGX_CONF_NOARGS,
+       ss_ftp_pwd },
+
        ss_null_command
 };
+
+void 
+ss_ftp_undefined_cmd(ss_ftp_request *r)
+{
+   ss_ftp_reply(r, COMMAND_NOT_IMPLEMENTED, COMMAND_NOT_IMPLEMENTED_M);
+}
 
 static void
 ss_ftp_user(ss_ftp_request *r)
 {
-   ss_ftp_reply(r, USER_NAME_OK_NEED_PASSWORD);
+   ss_ftp_reply(r, USER_NAME_OK_NEED_PASSWORD, USER_NAME_OK_NEED_PASSWORD_M);
 }
 
 static void
 ss_ftp_pass(ss_ftp_request *r)
 {
-   ss_ftp_reply(r, USER_LOGGED_IN);
+   ss_ftp_reply(r, USER_LOGGED_IN, USER_LOGGED_IN_M);
 }
 
 static void
 ss_ftp_quit(ss_ftp_request *r)
 {
+}
+
+static void
+ss_ftp_pasv(ss_ftp_request *r)
+{
+   ngx_connection_t  *data_conn;
+   ngx_event_t       *rev;
+
+   char port_str[10];
+
+   struct sockaddr_in addr;
+   socklen_t addr_len;
+   unsigned short port;
+
+   ngx_int_t listenfd = socket(AF_INET, SOCK_STREAM, 0); 
+   struct sockaddr_in serveraddr;
+   serveraddr.sin_family = AF_INET;
+   serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+   serveraddr.sin_port = 0;
+   bind(listenfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr));
+   listen(listenfd, 1024);
+   /* TODO : error handling  */
+
+   data_conn = ngx_get_connection(listenfd, NULL);
+   /* set log, the second argument */
+   /* error handling */
+
+   r->data_connection = data_conn;
+
+   data_conn->listening = ngx_pcalloc(r->pool, sizeof(ngx_listening_t));
+   /* TODO : check whether need to alloc space  */
+   data_conn->listening->handler = ss_ftp_init_data_connection;
+
+   rev = data_conn->read;
+   rev->handler = ngx_event_accept; 
+ 
+   ngx_handle_read_event(rev, 0);
+   /* error handling */ 
+
+   addr_len = sizeof(addr);
+   getsockname(listenfd, (struct sockaddr *) &addr, &addr_len); 
+   /* error handling */ 
+      
+   port = ntohs(addr.sin_port);
+   snprintf(port_str, sizeof(port_str), "%i", port);
+  
+   ss_ftp_reply(r, ENTERING_PASSIVE_MODE, port_str);
+   
+}
+
+static void
+ss_ftp_type(ss_ftp_request *r)
+{
+   ss_ftp_reply(r, COMMAND_OK, COMMAND_OK_M);
+}
+static void
+ss_ftp_pwd(ss_ftp_request *r)
+{
+   ss_ftp_reply(r, PATH_CREATED, ss_ftp_home_dir);
 }
 
 void

@@ -12,27 +12,39 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 #include "ssftp.h"
-#include "ssftp.c"
 #include "ss_ftp_reply.h"
 
 
-void ss_ftp_reply(ss_ftp_request *r, const char *reply_code);
+void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message);
 
 
 void
-ss_ftp_reply(ss_ftp_request *r, const char *reply_code)
+ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message)
 {
    ngx_chain_t  *chain;
 
    chain = ngx_pcalloc(r->pool, sizeof(ngx_chain_t));
-   chain->buf = ngx_create_temp_buf(r->pool, strlen(reply_code) + 1); 
-   strcpy((char *) chain->buf->pos, reply_code); 
-//   chain->buf->pos[strlen(reply_code)] = ' ';
- //  chain->buf->pos[strlen(reply_code)] = '\r';
-  // chain->buf->pos[strlen(reply_code)] = '\n';
+   
+   ngx_int_t reply_code_len = strlen(reply_code);
+   ngx_int_t reply_message_len = strlen(reply_message);
+   
+   /* 3 extra characters: 1 space + \r + \n + terminating \0 */
+   chain->buf = ngx_create_temp_buf(r->pool, 
+                                    reply_code_len + reply_message_len +4); 
+   snprintf((char *) chain->buf->pos, 
+            reply_code_len + reply_message_len + 4,
+            "%s %s\r\n",
+            reply_code,
+            reply_message);
+
+ //  strcpy((char *) chain->buf->pos, reply_code); 
+  // chain->buf->pos[reply_code_len] = ' ';
+   //strcpy((char *) &chain->buf->pos[reply_code_len +1], reply_message); 
+  // chain->buf->pos[reply_code_len + 1 + reply_message_len] = '\r';
+  // chain->buf->pos[reply_code_len + 1 + reply_message_len + 1] = '\n';
 
    /* leave terminating '\0' */
-   chain->buf->last += strlen(reply_code); 
+   chain->buf->last = chain->buf->last + reply_code_len + reply_message_len + 3; 
 
    ss_ftp_cmd_link_add_chain(r, chain);   
 }
