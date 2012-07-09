@@ -12,6 +12,14 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 
+#include "ssftp.h"
+
+#define OPEN_DIR_ERROR     -1
+#define OUT_OF_MEMORY      -2
+#define SS_FTP_OK           1
+
+
+typedef struct ss_ftp_request ss_ftp_request;
 
 typedef struct ss_ftp_command {
   ngx_str_t   name;

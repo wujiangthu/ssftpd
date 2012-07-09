@@ -22,6 +22,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
  *  Positive Preliminary Replies  
  */
 
+#define FILE_STATUS_OK          "150"
+#define FILE_STATUS_OK_M        " " 
 
 
 /*
@@ -36,6 +38,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
 #define COMMAND_NOT_IMPLEMENTED_M    "Command not implemented." 
 #define SERVICE_READY              "220" 
 #define SERVICE_READY_M              "Service is ready." 
+#define FILE_ACTION_OK              "226" 
+#define FILE_ACTION_OK_M            "File action ok, closing data connection." 
 #define ENTERING_PASSIVE_MODE      "227" 
 #define ENTERING_PASSIVE_MODE_M     "Entering Passive Mode." 
 #define USER_LOGGED_IN             "230" 
@@ -67,8 +71,12 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
  *  Transient Negative Replies  
  */
 
+#define SERVICE_NOT_AVAILABLE "421" 
+#define SERVICE_NOT_AVAILABLE_M "Service not avalaible, closing control connection." 
 #define INVALID_USERNAME_PASSWORD  "430 Invalid username or password." 
 #define HOST_UNAVAILABLE           "434 Requested host unavailable." 
+#define STORAGE_INSUFFICIENT "452" 
+#define STORAGE_INSUFFICIENT_M "Requested action ot taken. Insufficient storage space in system." 
 
 
 /*
@@ -79,6 +87,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
 
 #define COMMAND_SYNTAX_ERROR       "500 Syntax error,command unrecognized." 
 #define ARGUMENT_SYNTAX_ERROR      "501 Arguments syntax error." 
+#define FILE_UNAVAILABLE          "550" 
+#define FILE_UNAVAILABLE_M        "FILE OPERATION ERROR" 
 
 
 #endif /* _SS_FTP_REPLY_H_  */
