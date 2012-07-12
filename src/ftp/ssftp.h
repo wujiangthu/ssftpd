@@ -18,6 +18,8 @@
 
 
 typedef struct ss_ftp_request ss_ftp_request;
+typedef void (*ss_ftp_process_during_data_transmittion)(ngx_connection_t *c);
+typedef void (*ss_ftp_process_after_data_transmittion)(ngx_connection_t *c);
 
 typedef struct ss_ftp_send_receive_cmd {
   ss_ftp_request    *request;
@@ -32,6 +34,12 @@ typedef struct ss_ftp_send_receive_cmd {
   ngx_buf_t         *read_buf;
 
   ss_ftp_command    *cmd;
+  /* file descrptor for file opened in retrieve commmand */
+  ngx_int_t          fd_retr;
+  ngx_int_t          fd_stor;
+
+  ss_ftp_process_during_data_transmittion process; 
+  ss_ftp_process_after_data_transmittion  clean_up;
 
 } ss_ftp_send_receive_cmd; 
 

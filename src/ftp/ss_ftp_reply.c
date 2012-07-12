@@ -57,20 +57,52 @@ ss_ftp_process_insufficient_memory(ngx_connection_t *c)
   r = (ss_ftp_request *) c->data;
   assert(NULL != r);
   ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+  ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->log, 0, "ftp:memory allocated failed");
   /*TODO : logging*/
- 
-  if (SS_FTP_DATA_CONN == c->ftp_conn_type || SS_FTP_DATA_LISTEN_CONN == c->ftp_conn_type) {
-     ss_ftp_close_connection(c);
-  }
+  ss_ftp_close_connection(c); 
+
+     
 }
  
 void 
-ss_ftp_close_connection(ngx_connection_t *c) 
+ss_ftp_close_connection(ngx_connection_t *c)
 {
   assert(NULL != c);
-  assert(0 != c->fd);
- 
-  close(c->fd);
+
+  ngx_connection_t *lc;
+  ngx_connection_t *cc;
+  ngx_int_t         fd;
+  ngx_int_t         num_conn;
+  ss_ftp_request   *r;
+
+  if (SS_FTP_DATA_LISTEN_CONN == c->ftp_conn_type || SS_FTP_CONTROL_CONN == c->ftp_conn_type) {
+     ngx_close_connection(c);
+  }
+
+  if (SS_FTP_DATA_CONN == c->ftp_conn_type) {
+     lc = ((ss_ftp_send_receive_cmd *) c->send_receive_cmd)->data_listen_connection;
+     assert(NULL != lc);
+     ngx_close_connection(lc);
+
+     fd = ((ss_ftp_send_receive_cmd *) c->send_receive_cmd)->fd_retr;
+     //assert(0 != fd);
+     if (0 != fd) {
+        close(fd);
+     }
+
+     cc = ((ss_ftp_request *) (c->data))->connection; 
+     num_conn = cc->num_data_conns;
+     assert(num_conn > 0);
+     cc->num_data_conns--;
+     if (0 == cc->num_data_conns && CONTROL_CONN_CAN_BE_CLOSED == cc->to_be_closed) {
+        r = (ss_ftp_request *) cc->data;
+        ngx_close_connection(cc); 
+        ngx_destroy_pool(r->pool);
+     }
+      
+     ngx_close_connection(c);
 }
+}
+
 
 #endif /* _SS_FTP_REPLY_C_  */

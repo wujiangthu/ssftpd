@@ -38,6 +38,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
 #define COMMAND_NOT_IMPLEMENTED_M    "Command not implemented." 
 #define SERVICE_READY              "220" 
 #define SERVICE_READY_M              "Service is ready." 
+#define CLOSING_CONTROL_CONNECTION "221"
+#define CLOSING_CONTROL_CONNECTION_M "Closing control connection." 
 #define FILE_ACTION_OK              "226" 
 #define FILE_ACTION_OK_M            "File action ok, closing data connection." 
 #define ENTERING_PASSIVE_MODE      "227" 

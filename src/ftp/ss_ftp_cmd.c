@@ -15,7 +15,6 @@
 #include "ss_ftp_cmd.h"
 #include "ss_ftp_reply.h"
 #include "ss_ftp_reply.c"
-//#include "../event/ngx_event_accept.c"
 #include <assert.h>
 #include <stddef.h>
 #include <dirent.h>
@@ -30,7 +29,10 @@ static void ss_ftp_data_link_try_add_chain(ss_ftp_request *r, ngx_chain_t *chain
 void ss_ftp_undefined_cmd(ss_ftp_request *r); 
 static void ss_ftp_user(ss_ftp_request *r);
 static void ss_ftp_pass(ss_ftp_request *r);
+static void ss_ftp_cwd(ss_ftp_request *r);
+static void ss_ftp_cdup(ss_ftp_request *r);
 static void ss_ftp_quit(ss_ftp_request *r);
+static void ss_ftp_mode(ss_ftp_request *r);
 static void ss_ftp_pasv(ss_ftp_request *r);
 static void ss_ftp_port(ss_ftp_request *r);
 static void ss_ftp_type(ss_ftp_request *r);
@@ -38,8 +40,12 @@ static void ss_ftp_pwd(ss_ftp_request *r);
 static void ss_ftp_list(ss_ftp_request *r);
 static ngx_int_t list_dir_files(ngx_pool_t *pool, ngx_list_t *list, const char *dir);
 ngx_chain_t * list_to_chain(ngx_pool_t *pool, ngx_list_t *list);
+static void ss_ftp_list_clean_up(ngx_connection_t *c);
 static void ss_ftp_retr(ss_ftp_request *r);
+static void ss_ftp_retr_clean_up(ngx_connection_t *c);
 static void ss_ftp_stor(ss_ftp_request *r);
+static void ss_ftp_stor_process(ngx_connection_t *c);
+static void ss_ftp_stor_clean_up(ngx_connection_t *c);
 
 static ss_ftp_command ss_ftp_commands[] = {
        
@@ -57,11 +63,11 @@ static ss_ftp_command ss_ftp_commands[] = {
        
      { ngx_string("CWD"),
        NGX_CONF_TAKE1,
-       ss_ftp_user },
+       ss_ftp_cwd},
        
      { ngx_string("CDUP"),
        NGX_CONF_NOARGS,
-       ss_ftp_user },
+       ss_ftp_cdup},
 
      { ngx_string("QUIT"),
        NGX_CONF_NOARGS,
@@ -74,7 +80,7 @@ static ss_ftp_command ss_ftp_commands[] = {
 
      { ngx_string("MODE"),
        NGX_CONF_TAKE1,
-       ss_ftp_quit },
+       ss_ftp_mode},
 
      { ngx_string("PASV"),
        NGX_CONF_TAKE1,
@@ -128,7 +134,6 @@ ss_ftp_user(ss_ftp_request *r)
    file_name = ngx_pcalloc(r->pool, arg->len + 1);
    strncpy(file_name, (const char *) arg->data, arg->len);
    file_name[arg->len] = '\0';
-   printf("%s%s%s\n", "**", file_name, "**");
 
    ss_ftp_reply(r, USER_NAME_OK_NEED_PASSWORD, USER_NAME_OK_NEED_PASSWORD_M);
 }
@@ -143,14 +148,52 @@ ss_ftp_pass(ss_ftp_request *r)
    file_name = ngx_pcalloc(r->pool, arg->len + 1);
    strncpy(file_name, (const char *) arg->data, arg->len);
    file_name[arg->len] = '\0';
-   printf("%s%s%s\n", "**", file_name, "**");
 
    ss_ftp_reply(r, USER_LOGGED_IN, USER_LOGGED_IN_M);
+}
+
+static void 
+ss_ftp_cwd(ss_ftp_request *r)
+{
+   printf("%s\n", "enter cwd command******");
+
+   ss_ftp_reply(r, COMMAND_OK, COMMAND_OK_M);
+}
+
+static void 
+ss_ftp_cdup(ss_ftp_request *r)
+{
+   printf("%s\n", "enter cdup command******");
 }
 
 static void
 ss_ftp_quit(ss_ftp_request *r)
 {
+   printf("%s\n", "enter quit command******");
+
+   /*TODO : make sure all file operations on this control connection are completed*/ 
+   ngx_connection_t *c;
+   
+   c = r->connection;
+   assert(NULL != c);
+   
+   ss_ftp_reply(r, CLOSING_CONTROL_CONNECTION, CLOSING_CONTROL_CONNECTION_M);
+   if (0 == c->num_data_conns) {
+   printf("%s\n", "to be closed");
+      ss_ftp_close_connection(c); 
+      ngx_destroy_pool(r->pool);
+
+   } else {
+   printf("%s\n", "not now");
+      c->to_be_closed = CONTROL_CONN_CAN_BE_CLOSED;   
+   }
+   printf("%s\n", "exit quit command******");
+}
+
+static void 
+ss_ftp_mode(ss_ftp_request *r)
+{
+   printf("%s\n", "enter mode command******");
 }
 
 static void
@@ -159,7 +202,9 @@ ss_ftp_pasv(ss_ftp_request *r)
    printf("%s\n", "enter pasv command");
 
    ngx_connection_t  *data_listen_conn;
+   ngx_connection_t  *control_conn;
    ngx_event_t       *rev;
+   ngx_log_t         *log;
    ss_ftp_send_receive_cmd *srcmd;
 
    char address_port_str[100];
@@ -185,6 +230,7 @@ ss_ftp_pasv(ss_ftp_request *r)
 
    data_listen_conn->data = r;
    data_listen_conn->listening = ngx_pcalloc(r->pool, sizeof(ngx_listening_t));
+   //TODO : error handling
    /* TODO : check whether need to alloc space  */
    data_listen_conn->listening->pool_size = 4096;
    data_listen_conn->listening->handler = ss_ftp_init_data_connection;
@@ -194,9 +240,21 @@ ss_ftp_pasv(ss_ftp_request *r)
    rev = data_listen_conn->read;
    //rev->handler = ss_ftp_data_accept; 
    rev->handler = ngx_event_accept; 
- 
+
+   log = ngx_pcalloc(r->pool, sizeof(ngx_log_t)); 
+   if (NULL == log) printf("%s\n", "**log error, log null");
+   //TODO : error handling
+   *log = *(r->connection->log);
+   data_listen_conn->log = log;
+   data_listen_conn->listening->log = *log;
+   rev->log = log; 
+
    srcmd = ss_ftp_create_send_receive_cmd(r);
    srcmd->data_listen_connection = data_listen_conn;
+
+   control_conn = r->connection;
+   assert(control_conn->num_data_conns >= 0);
+   control_conn->num_data_conns++; 
 
    ngx_handle_read_event(rev, 0);
    /* error handling */ 
@@ -219,7 +277,7 @@ ss_ftp_pasv(ss_ftp_request *r)
 
    port = ntohs(addr.sin_port);
 
-   printf("%s%d\n", "port: ", port);
+   //printf("%s%d\n", "port: ", port);
    unsigned char p1 = port >> 8;
    unsigned char p2 = port - p1 * 256;
 
@@ -262,7 +320,6 @@ ss_ftp_list(ss_ftp_request *r)
    assert(r != NULL);
    assert(NULL != r->connection);
 
-   ss_ftp_reply(r, FILE_STATUS_OK, "Here comes the directory listing");
 
   // char list[] = "-rw-rw-rw- 1 1000 1000 6401 Jul 01 2000 hello.txt\r\n";
    //char list[] = "123.txt\r\na";
@@ -271,6 +328,9 @@ ss_ftp_list(ss_ftp_request *r)
    ngx_chain_t  *chain_list;
    ngx_list_t   *list;
    ngx_int_t     rc;
+   ss_ftp_send_receive_cmd *srcmd;
+
+   ss_ftp_reply(r, FILE_STATUS_OK, "Here comes the directory listing");
 
    list = ngx_list_create(r->pool, 5, sizeof(ngx_str_t)); 
    if (NULL == list) {
@@ -302,9 +362,10 @@ ss_ftp_list(ss_ftp_request *r)
 
    /* leave terminating '\0' */
    //chain->buf->last = chain->buf->last + sizeof(list) -1;
-
-   assert(r->send_receive_cmd->type == 0);
-   r->send_receive_cmd->type = SS_FTP_SEND_CMD;
+   srcmd = r->send_receive_cmd; 
+   assert(srcmd->type == 0);
+   srcmd->type = SS_FTP_SEND_CMD;
+   srcmd->clean_up = ss_ftp_list_clean_up;
 
    ss_ftp_data_link_try_add_chain(r, chain_list);
 
@@ -431,6 +492,20 @@ list_to_chain(ngx_pool_t *pool, ngx_list_t *list)
    //chain->buf->last = chain->buf->last + sizeof(list) -1;
 }
 
+static void 
+ss_ftp_list_clean_up(ngx_connection_t *c)
+{ 
+   assert(NULL != c);
+
+   ss_ftp_request *r;
+   
+   r = (ss_ftp_request *) c->data;
+   ss_ftp_reply(r, FILE_ACTION_OK, FILE_ACTION_OK_M); 
+
+   ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->log, 0, "ftp:about to close data connection");
+   ss_ftp_close_connection(c);
+}
+
 static void
 ss_ftp_retr(ss_ftp_request *r)
 {
@@ -455,7 +530,8 @@ ss_ftp_retr(ss_ftp_request *r)
 
    fd = open(file_name, O_RDONLY);
    printf("%s %d\n", "fd", fd); 
-
+   assert(NULL != r->send_receive_cmd);
+   r->send_receive_cmd->fd_retr = fd;
    /* error handling  */
 
    /* TODO : to check i/o operating modes for potential performance improvements */
@@ -475,6 +551,7 @@ ss_ftp_retr(ss_ftp_request *r)
 
    assert(r->send_receive_cmd->type == 0);
    r->send_receive_cmd->type = SS_FTP_SEND_CMD;
+   r->send_receive_cmd->clean_up = ss_ftp_retr_clean_up;
 
    ss_ftp_reply(r, FILE_STATUS_OK, "open data connection for file transfering");
    ss_ftp_data_link_try_add_chain(r, chain);
@@ -482,10 +559,36 @@ ss_ftp_retr(ss_ftp_request *r)
    //TODO : ss_ftp_reply(r, , );
 }
 
+static void 
+ss_ftp_retr_clean_up(ngx_connection_t *c)
+{ 
+   assert(NULL != c);
+
+   ss_ftp_request *r;
+   
+   r = (ss_ftp_request *) c->data;
+   ss_ftp_reply(r, FILE_ACTION_OK, FILE_ACTION_OK_M); 
+
+   ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->log, 0, "ftp:about to close data connection");
+   ss_ftp_close_connection(c);
+}
+
 static void
 ss_ftp_stor(ss_ftp_request *r)
 {
 //   ss_ftp_reply(r, , );
+}
+
+static void 
+ss_ftp_stor_process(ngx_connection_t *c)
+{
+
+}
+
+static void 
+ss_ftp_stor_clean_up(ngx_connection_t *c)
+{
+
 }
 
 void
