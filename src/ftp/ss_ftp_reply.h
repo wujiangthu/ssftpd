@@ -8,12 +8,14 @@
 #define _SS_FTP_REPLY_H_
 
 
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_event.h>
+#include "ss_ftp_core.h"
 
 
 void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message);
+void ss_ftp_reply_realpath_error(ss_ftp_request *r, int err_no);
+void ss_ftp_reply_mkdir_error(ss_ftp_request *r, int err_no);
+void ss_ftp_process_out_of_memory(ss_ftp_request *r);
+void ss_ftp_close_connection(ngx_connection_t *c);
 
 
 /* 
@@ -37,7 +39,7 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
 #define COMMAND_NOT_IMPLEMENTED    "202" 
 #define COMMAND_NOT_IMPLEMENTED_M    "Command not implemented." 
 #define SERVICE_READY              "220" 
-#define SERVICE_READY_M              "Service is ready." 
+#define SERVICE_READY_M              "(ssftp) beta" 
 #define CLOSING_CONTROL_CONNECTION "221"
 #define CLOSING_CONTROL_CONNECTION_M "Closing control connection." 
 #define FILE_ACTION_OK              "226" 
@@ -52,6 +54,8 @@ void ss_ftp_reply(ss_ftp_request *r, const char *reply_code, char *reply_message
 #define USER_DELAYED_LOGGED_OUT    "232"
 #define USER_DELAYED_LOGGED_OUT_M    "Logged out command received, \
                                         will complete when transfer done." 
+//#define FILE_ACTION_OK               "250"    
+//#define FILE_ACTION_OK_M            "File action ok."    
 #define PATH_CREATED               "257"    
 #define PATH_CREATED_M               "Path created."    
 
