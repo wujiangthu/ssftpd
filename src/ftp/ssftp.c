@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) Wu Jiang <wujiangthu@gmail.com>
  */
@@ -8,6 +7,7 @@
 #define _SSFTP_C_
    
 
+#include "ss_ftp_core.h"
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
@@ -15,16 +15,13 @@
 #include <assert.h>
 
 #include "ssftp.h"
-#include "ss_ftp_cmd.h"
-#include "ss_ftp_cmd.c"
-#include "ss_ftp_reply.h"
+
 
 #define  SS_AGAIN                         NGX_AGAIN
 #define  SS_ERROR                         NGX_ERROR
+#define  SS_OK                            NGX_OK
+#define  SS_TRANSFER_COMPLETE             0 
 #define  SS_BUF_FULL                      -100 
-#define  SS_FTP_PARSE_ONE_COMMAND_DONE    1
-#define  SS_FTP_INVALID_COMMAND           2
-
 #define SS_FTP_REQUEST_DEFAULT_POOL_SIZE  1024*8
 #define SS_FTP_CMD_DEFAULT_BUF_LEN        1024
 
@@ -33,23 +30,20 @@
    ? __ASSERT_VOID_CAST (0)                    \
    : __assert_fail (__STRING(expr), __FILE__, __LINE__, __ASSERT_FUNCTION))
 
+
+char ss_ftp_home_dir_l_bak[] = "\"/tmp/ftp\"";
+char ss_ftp_home_dir_bak[] = "/tmp/ftp/";
+
+
 void ss_ftp_init_control_connection(ngx_connection_t *c);
 static void ss_ftp_init_request(ngx_event_t *rev);
-static void ss_ftp_process_cmds(ngx_event_t *rev);
-static ngx_int_t ss_ftp_cmd_link_read(ngx_connection_t *c);
-static ngx_int_t ss_ftp_data_link_read(ngx_connection_t *c);
-static ngx_int_t ss_ftp_read_data(ngx_connection_t *c, ngx_buf_t *buf);
-static ngx_int_t ss_ftp_parse_command(ss_ftp_request *r);
+void ss_ftp_process_cmds(ngx_event_t *rev);
 static ngx_int_t ss_ftp_process_command(ss_ftp_request *r); 
-static void ss_to_lower(u_char *str, ngx_int_t len);
-void ss_ftp_cmd_link_write(ngx_event_t *send);
-ngx_int_t ss_ftp_data_link_write(ngx_connection_t *c);
-void ss_ftp_cmd_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain);
-ngx_int_t ss_ftp_data_link_add_chain(ngx_connection_t *c, ngx_chain_t *chain);
-static ngx_int_t ss_ftp_write(ngx_connection_t *c, ngx_chain_t *current_chain, ngx_chain_t *in);
 void ss_ftp_init_data_connection(ngx_connection_t *c);
+void ss_ftp_data_conn_set_handler(ngx_connection_t *c);
 static void ss_ftp_process_data_link_read(ngx_event_t *rev);
 static void ss_ftp_process_data_link_write(ngx_event_t *rev);
+
 
 void 
 ss_ftp_init_control_connection(ngx_connection_t *c)
@@ -59,8 +53,10 @@ ss_ftp_init_control_connection(ngx_connection_t *c)
   assert(c != NULL);
   assert(SS_FTP_CONTROL_CONN == c->ftp_conn_type);
 
-  ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->pool->log, 0, "ftp:init control conn");  
+  ss_ftp_home_dir_l = ss_ftp_home_dir_l_bak;
+  ss_ftp_home_dir = ss_ftp_home_dir_bak;
 
+  ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->pool->log, 0, "ftp:init control conn");  
   ngx_event_t *rev;
   ngx_event_t *send;
 
@@ -69,16 +65,12 @@ ss_ftp_init_control_connection(ngx_connection_t *c)
   rev->handler = ss_ftp_init_request;
   send->handler = ss_ftp_cmd_link_write;
 
+  c->cmd_link_read = ss_ftp_cmd_link_read;
+
   ngx_handle_read_event(rev, 0);
   ngx_handle_write_event(send, 0);
 
-  /* Welcome message  */
-  char welcome[] = "220 (ssftp) beta\r\n";
-  int rc = write(c->fd, welcome, strlen(welcome));
-  rc++;
-  //ss_ftp_reply(r, "hello, my friend. SSftp welcome you!");
-  //ss_ftp_init_request(rev);
-  ss_ftp_create_commands_hash_table(c->pool); 
+  ss_ftp_init_request(rev);
 }
 
 static void
@@ -86,7 +78,9 @@ ss_ftp_init_request(ngx_event_t *rev)
 {
 
   ngx_connection_t  *c;
+  ngx_int_t          rc;
   ss_ftp_request    *r;
+  ngx_int_t          home_dir_len;
 
   c = rev->data;
   assert(c != NULL && c->pool != NULL);
@@ -97,30 +91,34 @@ ss_ftp_init_request(ngx_event_t *rev)
 
   r->pool = ngx_create_pool(SS_FTP_REQUEST_DEFAULT_POOL_SIZE, c->log);
   /* TODO : error handling  */
+  rc = ss_ftp_create_commands_hash_table(c->pool); 
+  assert(OUT_OF_MEMORY == rc || NGX_OK == rc);
+  if (OUT_OF_MEMORY == rc) {
+     ss_ftp_process_out_of_memory(r);
+  }
   
   r->connection = c;
   r->state = 0;
+  r->protection_level = SS_FTP_CLEAR;
   r->cmd_buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
   r->cmd_link_write = ngx_pcalloc(r->pool, sizeof(ngx_chain_t)); 
   r->cmd_link_write->buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
   r->cmd_link_write->next = NULL;
 
-  r->current_dir = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
-  r->current_dir->data  = ngx_pcalloc(r->pool, sizeof(ss_ftp_home_dir));
-  r->current_dir->len   = sizeof(ss_ftp_home_dir);
-  ngx_memcpy(r->current_dir->data, ss_ftp_home_dir, sizeof(ss_ftp_home_dir));
+  /* TODO : choose a better size  */
+  home_dir_len = strlen(ss_ftp_home_dir);
+  r->current_dir.path  = ngx_pcalloc(r->pool, SS_FTP_FILENAME_BUF_LEN);
+  r->current_dir.plen  = home_dir_len;
+  r->current_dir.psize = home_dir_len + 1;
+  ngx_memcpy(r->current_dir.path, ss_ftp_home_dir, r->current_dir.psize);
 
-  /* TODO :  change 10 to better value  */
-  //r->cmd_args = ngx_array_create(r->pool, 10, sizeof(ngx_str_t));
-  /* TODO : initialize r */
-  
+  ss_ftp_reply(r, SERVICE_READY, SERVICE_READY_M);
 
   rev->handler = ss_ftp_process_cmds;
-
   ss_ftp_process_cmds(rev);
 }
 
-static void 
+void 
 ss_ftp_process_cmds(ngx_event_t *rev)
 {
   ngx_int_t         rc;
@@ -133,23 +131,26 @@ ss_ftp_process_cmds(ngx_event_t *rev)
 
   for ( ;; ) {
 
-      if (-1 == c->fd) {
+      if (-1 == c->fd || CONTROL_CONN_CAN_BE_CLOSED == c->to_be_closed) {
          return;
       }
 
-      rc = ss_ftp_cmd_link_read(c);
+      rc = c->cmd_link_read(c);
+      assert(SS_AGAIN == rc || SS_ERROR == rc || rc >= 0);
       
       if (SS_AGAIN == rc) {
           return; 
       }
 
       if (SS_ERROR == rc) {
+printf("%s\n", "ss error");
         /* TODO : stop, not return  */
           return; 
       }
 
       //r->cmd_args = ngx_array_create(r->pool, 10, sizeof(ngx_str_t));
       rc =  ss_ftp_parse_command(r);      
+      assert(SS_AGAIN == rc || SS_FTP_INVALID_COMMAND == rc || SS_OK == rc || SS_FTP_PARSE_ONE_COMMAND_DONE == rc);
 
       
       if (SS_AGAIN == rc) {
@@ -169,284 +170,6 @@ ss_ftp_process_cmds(ngx_event_t *rev)
       /* TODO : decide a better place to put it*/
       //r->cmd_args = ngx_array_create(r->pool, 10, sizeof(ngx_str_t));
   }
-}
-
-static ngx_int_t
-ss_ftp_cmd_link_read(ngx_connection_t *c)
-{
-   assert(c != NULL);
-   ngx_int_t         rc;
-   ss_ftp_request   *r;
-
-   r = (ss_ftp_request *) c->data;
-   assert(r != NULL);
-
-   /*if (NULL == r->cmd_buf) {
-      printf("%s\n", "ss_error in read data");
-      return SS_ERROR;
-   }*/
-   assert(r->cmd_buf != NULL);
-   rc = ss_ftp_read_data(c, r->cmd_buf);
-   assert(rc > 0 || rc == SS_AGAIN || rc == SS_ERROR || rc == SS_BUF_FULL);
-
-   /* All buffered data have been processed, and buffer becomes full */
-   if (SS_BUF_FULL == rc) { 
-      /* TODO : save command to another buffer */       
-   }
-   
-   /* TODO  */
-   /* just for passing compilation */
-   return rc;
-}
-
-static ngx_int_t
-ss_ftp_data_link_read(ngx_connection_t *c)
-{
-   assert(c != NULL);
-   ngx_int_t         rc;
-   ss_ftp_send_receive_cmd *srcmd;
-   ngx_buf_t        *buf;
-
-   srcmd = c->send_receive_cmd; 
-   buf = srcmd->read_buf;
-   assert(srcmd != NULL);
-   assert(buf != NULL);
-   rc = ss_ftp_read_data(c, buf);
-   assert(rc > 0 || rc == SS_AGAIN || rc == SS_ERROR || rc == SS_BUF_FULL);
-
-   /* All buffered data have been processed, and buffer becomes full */
-   if (SS_BUF_FULL == rc) {
-      buf->pos = buf->start;
-      buf->last = buf->start; 
-
-      rc = ss_ftp_read_data(c, buf);
-      assert(rc > 0 || rc == SS_AGAIN || rc == SS_ERROR);
-   }
-
-   if (rc > 0 || rc == SS_AGAIN) {
-      return rc; 
-   }
-
-   /* Error */
-   /* TODO : consider putting error handling here or throw to caller */ 
-    return rc;
-}
-
-static ngx_int_t
-ss_ftp_read_data(ngx_connection_t *c, ngx_buf_t *buf)
-{
-   /* TODO : modify to make it suitable for both cmd and data link reading  */
-   /* TODO : allocate more space if needed */
-
-   assert(c != NULL);
-   assert(buf != NULL);
-  
-   ngx_int_t           n, n_free;
-   ngx_event_t        *rev;
-
-   rev = c->read;
-
-   n = buf->last - buf->pos;
-   assert(n >= 0);
-   if (n > 0) {
-      return n; 
-   }
-
-   n_free = buf->end - buf->last;
-   assert(n_free >= 0);
-   if (0 == n_free) {
-      return SS_BUF_FULL; 
-   }
-
-   if (rev->ready) {
-      n = c->recv(c, 
-                  buf->last, 
-		  buf->end - buf->last); 
-   } else {
-      n = SS_AGAIN; 
-   }
-
-   if (SS_AGAIN == n) {
-      ngx_handle_read_event(rev, 0); 
-
-      /* TODO : error handling  */
-
-      return SS_AGAIN;
-   }
-
-   if (0 == n || SS_ERROR == n) {
-
-      /* TODO : error handling  */
-
-      return SS_ERROR; 
-   }
-
-   buf->last += n;
-
-   return n;
-}
-
-static ngx_int_t
-ss_ftp_parse_command(ss_ftp_request *r) 
-{
-   assert(r != NULL);
-
-   enum {
-         state_start,
-	 state_skip_telnet_chars,
-	 state_name,
-	 state_space_before_arg,
-	 state_arg,
-	 state_almost_done,
-	 state_done
-   } state;
-
-   state = r->state;
-   ngx_int_t stcs = r->skipped_tel_chars;
-
-   u_char *p, ch;
-   ngx_str_t *arg;
-   ngx_buf_t *buf = r->cmd_buf;
-   for (p = buf->pos; p < buf->last; p++) {
-       ch = *p;
-
-      switch (state) {
-        
-      case state_start:
-          /* roll back */
-           r->cmd_args = ngx_array_create(r->pool, 10, sizeof(ngx_str_t));
-
-           p--; 
-           state = state_skip_telnet_chars;
-	   break;
-
-      case state_skip_telnet_chars:
-
-           /*  skip telnet control characters */
-
-	   if (0 == stcs) {
-
-	      if (255 == ch) {
-	         stcs =2;
-
-	      } else {
-		 r->cmd_name_start = p;
-	         state = state_name;
-	      }
-
-	   } else {
-	      stcs--; 
-	   }
-
-	   break;
-
-      case state_name:
-
-           /* parse command name */
-
-	   if (' ' == ch) {
-	      r->cmd_name_end = p-1; 
-              state = state_space_before_arg;
-
-	   } else if ('\r' == ch) {
-	      r->cmd_name_end = p-1; 
-	      state = state_almost_done; 
-
-	   } else {
-
-	      /* comand name character, continue */ 
-	   }
-
-	   break;
-      
-      case state_space_before_arg:
-
-           /* skip SPACEs before argument */
-
-           if ('\r' == ch) {
-	      state =state_almost_done;    
-
-	   } else if (' ' != ch) {
-	      r->cmd_arg_start = p; 
-	      state = state_arg;
-
-	   } else {
-
-	      /* skip spaces */ 
-	   }
-
-	   break;
-
-      case state_arg:
-
-           /* parse arguments */
-
-	   if (' ' == ch) {
-	      state = state_space_before_arg; 
-
-	   } else if ('\r' == ch) {
-	      state = state_almost_done;
-
-	   } else {
-
-	     /*  argument character  */ 
-
-	     break;
-	   }
-
-	   r->cmd_arg_end = p-1;
-	   arg = (ngx_str_t *) ngx_array_push(r->cmd_args);
-	   //arg->data = r->cmd_arg_start;
-	   arg->len  = r->cmd_arg_end - r->cmd_arg_start + 1;
-           arg->data = ngx_pcalloc(r->pool, arg->len);
-           if (NULL == arg->data) {
-              ss_ftp_process_insufficient_memory(r->connection);
-           }
-
-           strncpy((char *) arg->data, (const char *) r->cmd_arg_start, arg->len);
-
-	   break;
-
-      case state_almost_done:
-
-           /* received '\r', waiting for '\n' */
-           
-	   if ('\n' == ch) {
-               state = state_done;
-
-               /* update command buffer pointer  */
-               r->cmd_buf->pos = p + 1;
-
-	       break;
-	   }
-
-	   return SS_FTP_INVALID_COMMAND;
-
-      case state_done:
-           goto done;           
-
-      default :
-
-           /* error handling  */
-
-           break; 
-    }
-  }
-
-
-done:
-
-  r->state = state;
-  r->skipped_tel_chars = stcs;
-
-  if (state_done == state) {
-      r->state = state_start;
-      return SS_FTP_PARSE_ONE_COMMAND_DONE; 
-
-  } else {
-      return SS_AGAIN;  
-  }
-
 }
 
 static ngx_int_t
@@ -486,186 +209,84 @@ ss_ftp_process_command(ss_ftp_request *r)
    /* handler return value  */
 } 
 
-static void 
-ss_to_lower(u_char *str, ngx_int_t len)
-{
-   assert(str != NULL && len > 0);
-
-   ngx_int_t count = 0;
-   for (count = 0; count < len; count++) {
-       str[count] = tolower(str[count]); 
-   }
-}
-
-void 
-ss_ftp_cmd_link_write(ngx_event_t *send)
-{
-   ngx_connection_t  *c;
-   ss_ftp_request    *r;
-   ngx_int_t         rc;
-
-   c = (ngx_connection_t *) send->data;
-   assert(c != NULL);
-   r = (ss_ftp_request *) c->data;
-   assert(r != NULL);
-
-   rc = ss_ftp_write(c, r->cmd_link_write, NULL); 
-   assert(rc == NGX_AGAIN || rc == NGX_OK);
-   if (NGX_AGAIN == rc) {
-      ngx_handle_write_event(send, 0);
-
-   /* Data transmited ok. */
-   } else {
-      /* TODO  */	   
-     // ngx_del_event();    
-   }
-}
-
-ngx_int_t 
-ss_ftp_data_link_write(ngx_connection_t *data_conn)
-{
-//   printf("%s\n", "data link write");
-   assert(data_conn != NULL);
-
-   //ss_ftp_request    *r;
-   assert(data_conn->data != NULL);
-   //r = (ss_ftp_request *) data_conn->data;
-   assert(data_conn->send_receive_cmd != NULL);
-
-   ngx_chain_t *chain = ((ss_ftp_send_receive_cmd *) (data_conn->send_receive_cmd))->chain;
-   assert(chain != NULL);
-
-   return ss_ftp_write(data_conn, chain, NULL); 
-}
-
-void
-ss_ftp_cmd_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain)
-{
-   assert(r != NULL);
-
-   ngx_event_t  *send;
-   ngx_connection_t *conn;
-   ngx_int_t     rc;
-
-   conn = (ngx_connection_t *) r->connection;
-   rc = ss_ftp_write(conn, r->cmd_link_write, chain);
-   assert(rc == NGX_AGAIN || rc == NGX_OK);
-   if (NGX_AGAIN == rc) {
-      send = conn->write;
-      ngx_handle_write_event(send, 0);
-
-   /* Data transmited ok. */
-   } else {
-      /* TODO  */	   
-      //ngx_del_event();    
-   }
-}
-
-ngx_int_t
-ss_ftp_data_link_add_chain(ngx_connection_t *data_conn, ngx_chain_t *chain)
-{
-   assert(data_conn != NULL);
-
-   ss_ftp_send_receive_cmd *srcmd;
-   srcmd = data_conn->send_receive_cmd;
-   assert(srcmd != NULL);
-
-   return ss_ftp_write(srcmd->data_connection, srcmd->chain, chain);
-}
-
-
-static ngx_int_t 
-ss_ftp_write(ngx_connection_t *c, ngx_chain_t *current_chain, ngx_chain_t *in)
-{
-   assert(c != NULL);
-
-   ngx_chain_t       **ll;
-   ngx_chain_t       **fl;
-   ngx_chain_t       *temp;
-   ngx_chain_t       *temp2;
-   ngx_chain_t       *chain;
-   ngx_int_t          ctype;
-   //ngx_event_t       *send;
-   ss_ftp_request    *r;
-
-   r = (ss_ftp_request *) c->data;
-   ctype = c->ftp_conn_type;
-   assert(SS_FTP_CONTROL_CONN == ctype || SS_FTP_DATA_CONN == ctype);
-
-   if (SS_FTP_CONTROL_CONN == ctype) {
-      ll = &r->cmd_link_write; 
-
-   } else {
-      ll = &((ss_ftp_send_receive_cmd *) (c->send_receive_cmd))->chain; 
-   } 
-
-   fl = ll;
-
-   for (temp = current_chain; temp; temp = temp->next) {
-       ll = &temp->next; 
-   }
-
-   *ll = in;
-
-   //c = (ngx_connection_t *) r->connection;
-   chain = c->send_chain(c, *fl, 0);
-
-   for (temp = *fl; temp && temp != chain; /* void */){
-       temp2 = temp->next;
-       ngx_free_chain(r->pool, temp);
-       temp = temp2;
-   }
-
-   *fl = temp;
-   /* All chains have been sent */
-   if (NULL == *fl) {
-      return NGX_OK; 
-   }   
-   //send = c->write;
-  // ngx_handle_write_event(send, 0);
-
-   /* check whether it is suitable to put it here  */
-   /* error handling  */
-
-   return NGX_AGAIN;
-}
-
 void 
 ss_ftp_init_data_connection(ngx_connection_t *c) 
 {
    assert(c != NULL);
    assert(SS_FTP_DATA_CONN == c->ftp_conn_type);
 
-   ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->pool->log, 0, "ftp:init data connection");  
-
-   ngx_event_t *rev;
-   ngx_event_t *send;
    ss_ftp_request *r;
    ss_ftp_send_receive_cmd **r_srcmd;
-   ss_ftp_send_receive_cmd *dc_srcmd;
+   ngx_connection_t        *cc;
 
    r = (ss_ftp_request *) c->data;
    assert(r != NULL);
-   // for test, for keep work, not comment it
-  // assert(r->send_receive_cmd->data_connection == NULL);
    r->send_receive_cmd->data_connection = c;
    r_srcmd = &r->send_receive_cmd;
    assert(*r_srcmd != NULL);
    /* Corresponding command have't come yet */
-   if (NULL == (*r_srcmd)->chain) {
+   if (false == (*r_srcmd)->cmd_arrived) {
       ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->pool->log, 0, "ftp:command not come yet");  
       return;
    }
 
+   cc = r->connection;
+   cc->num_data_conns++;
+   assert(cc->num_data_conns ==1);
+
    c->send_receive_cmd = *r_srcmd; 
    *r_srcmd = NULL; 
 
+   ngx_ssl_t   ssl;
+   if (SS_FTP_CLEAR != r->protection_level) {
+
+      if (ss_ftp_ssl_create(r, &ssl) != NGX_OK) {
+         return;
+      }
+
+      if (ss_ftp_ssl_certificate(r, &ssl) != NGX_OK) {
+         return;
+      }
+
+      if (ss_ftp_ssl_create_connection(c, &ssl) != NGX_OK) {
+         return;
+      }
+
+      c->ssl->handler = ss_ftp_data_conn_set_handler;
+      c->ssl->buffer = 0;
+
+     ngx_ssl_handshake(c);
+/*
+     int rc =  ngx_ssl_handshake(c);
+     printf("%d\n", rc);
+     while (rc == NGX_AGAIN) {
+
+     rc =  ngx_ssl_handshake(c);
+     
+     printf("%d\n", rc);
+    }
+     ss_ftp_data_conn_set_handler(c);
+*/
+      return;
+   }
+
+   ss_ftp_data_conn_set_handler(c);
+}
+
+void
+ss_ftp_data_conn_set_handler(ngx_connection_t *c)
+{
+   assert(NULL != c);
+
+   ss_ftp_send_receive_cmd *dc_srcmd;
+   ngx_event_t *rev;
+   ngx_event_t *send; 
+  
    dc_srcmd = c->send_receive_cmd;
-   assert( dc_srcmd->type == SS_FTP_RECEIVE_CMD 
+   assert( dc_srcmd->type == SS_FTP_RECEIVE_CMD
         || dc_srcmd->type == SS_FTP_SEND_CMD);
 
    if (SS_FTP_RECEIVE_CMD == dc_srcmd->type) {
-   //   printf("%s\n", "read type command");  
 
       rev = c->read;
       rev->handler = ss_ftp_process_data_link_read;
@@ -673,10 +294,13 @@ ss_ftp_init_data_connection(ngx_connection_t *c)
       ss_ftp_process_data_link_read(c->read);
 
    } else {
-    // printf("%s\n", "write type command");  
 
      send = c->write;
      send->handler = ss_ftp_process_data_link_write;
+
+     /* For send file, not send_file()  */
+     rev = c->read;
+     rev->handler = ss_ftp_process_data_link_write;
      //ngx_handle_write_event(send, 0);
      ss_ftp_process_data_link_write(c->write);
    }
@@ -686,30 +310,66 @@ static void
 ss_ftp_process_data_link_read(ngx_event_t *rev) 
 {
    ngx_int_t          rc;
+   ngx_int_t          n;
+   int                file_fd;
+   int                fd_bak;
    ngx_connection_t  *data_conn;
    ss_ftp_send_receive_cmd  *srcmd;
 
    data_conn = (ngx_connection_t *) rev->data;
    assert(SS_FTP_DATA_CONN == data_conn->ftp_conn_type);
    srcmd = (ss_ftp_send_receive_cmd *) data_conn->send_receive_cmd;
+   file_fd = srcmd->fd_stor;
 
-   rc = ss_ftp_data_link_read(data_conn);
-   assert(rc == NGX_AGAIN || rc == NGX_OK);
-   if (NGX_AGAIN == rc) {
-      if (NULL != srcmd->process) {
-         srcmd->process(data_conn);
-      }
+   for ( ;; ) {
 
-      ngx_handle_read_event(rev, 0); 
-      return;
+     rc = ss_ftp_data_link_read(data_conn);
+     assert(rc == NGX_AGAIN || rc == SS_ERROR || rc == SS_TRANSFER_COMPLETE || rc > 0);
+
+     if (NGX_AGAIN == rc) {
+        ngx_handle_read_event(rev, 0); 
+        return;
+     }
+
+     if (SS_ERROR == rc) {
+        /* error handling */
+        ngx_log_debug0(NGX_LOG_DEBUG_FTP, data_conn->log, 0, "read data link error");
+        return;
+     }
+
+     if (rc > 0) {
+
+        if (NULL == srcmd->process) {
+           continue;
+        }
+
+        n = srcmd->process(data_conn);
+        if (NGX_ERROR == n) {
+           /* ERROR handling */
+    
+           return;
+        }
+
+        if (NGX_OK == n) {
+           continue;
+        }
+        
+        if (SS_WRITE_FILE_AGAIN == n) {
+           fd_bak = data_conn->fd;
+           data_conn->fd = file_fd;
+           ngx_handle_write_event(data_conn->write, 0);
+           data_conn->fd = fd_bak;
+
+           return;
+        }
+     }
+
+     if (SS_TRANSFER_COMPLETE == rc) {
+        assert(NULL != srcmd->clean_up);
+        srcmd->clean_up(data_conn);
+        return;
+     }
    }
-
-   /* Transmittion complete. */
-   /* TODO : reply to client, close data connection */
-
-   assert(NULL != srcmd->clean_up);
-   srcmd->clean_up(data_conn);
-
 }
 
 static void 
@@ -718,20 +378,54 @@ ss_ftp_process_data_link_write(ngx_event_t *send)
    ngx_int_t                 rc;
    ngx_connection_t         *data_conn;
    ss_ftp_send_receive_cmd  *srcmd;
+   ss_ftp_request           *r;
+   int                       file_fd;
+   int                       fd_bak;
 
    data_conn = (ngx_connection_t *) send->data;
    assert(SS_FTP_DATA_CONN == data_conn->ftp_conn_type);
    srcmd = (ss_ftp_send_receive_cmd *) data_conn->send_receive_cmd;
+   file_fd = srcmd->fd_retr;
+   r = srcmd->request;
 
-   rc = ss_ftp_data_link_write(data_conn);
-   assert(rc == NGX_AGAIN || rc == NGX_OK);
+   rc = ss_ftp_data_link_send(data_conn);
+   assert(rc == NGX_AGAIN || rc == SS_READ_FILE_AGAIN || rc == SS_WRITE_SOCK_AGAIN || rc == NGX_OK || rc == NGX_ERROR);
+
+   if (NGX_ERROR == rc) {
+printf("%s\n", "nginx errorrrrrrrrr");
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, data_conn->log, 0, "ftp:write data link error");
+      ss_ftp_reply(r, "451", "Server error in processing");
+      return;
+   }
+
+   if (SS_READ_FILE_AGAIN == rc) {
+      fd_bak = data_conn->fd;
+      data_conn->fd = file_fd;
+      ngx_handle_read_event(data_conn->read, 0);
+      data_conn->fd = fd_bak;
+
+      return;
+   }
+
+   if (SS_WRITE_SOCK_AGAIN == rc) {
+      ngx_handle_write_event(data_conn->write, 0);
+      return;
+   }
+
    if (NGX_AGAIN == rc) {
+      /* For sending without ssl */
       if (NULL != srcmd->process) {
          srcmd->process(data_conn);
       }
 
-      ngx_handle_write_event(send, 0); 
+      ngx_handle_write_event(data_conn->write, 0); 
       return;
+   }
+
+   assert(NGX_OK == rc);
+
+   if (srcmd->request->protection_level != SS_FTP_CLEAR) {
+      SSL_shutdown(data_conn->ssl->connection);
    }
 
    assert(NULL != srcmd->clean_up);
