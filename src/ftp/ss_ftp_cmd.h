@@ -8,16 +8,14 @@
 #define _SS_FTP_COMMAND_H_
 
 
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_event.h>
+#include "ss_ftp_core.h"
 
-#include "ssftp.h"
 
-#define OPEN_DIR_ERROR     -1
-#define OUT_OF_MEMORY      -2
-#define SS_FTP_OK           1
-
+#define OPEN_DIR_ERROR          -1
+#define STAT_ERROR              -2
+#define OUT_OF_MEMORY           -3
+#define SS_FTP_FILE_NOT_FOUND   -4
+#define SS_FTP_OK                1
 
 typedef struct ss_ftp_request ss_ftp_request;
 
@@ -33,7 +31,7 @@ typedef struct ss_ftp_command {
 
 ngx_hash_t *ss_ftp_cmds_hash_table;
 
-void ss_ftp_create_commands_hash_table(ngx_pool_t *pool);
-
+ngx_int_t ss_ftp_create_commands_hash_table(ngx_pool_t *pool);
+void ss_ftp_undefined_cmd(ss_ftp_request *r);
 
 #endif /* _SS_FTP_COMMAND_H_ */
