@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) Wu Jiang <wujiangthu@gmail.com>
  */
@@ -8,17 +7,37 @@
 #define _SSFTP_H_
   
 
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_event.h>
-#include "ss_ftp_cmd.h"
+#include "ss_ftp_core.h"
 
-#define SS_FTP_SEND_CMD     1
-#define SS_FTP_RECEIVE_CMD  2
+#define SS_FTP_SEND_CMD           1
+#define SS_FTP_RECEIVE_CMD        2
+#define SS_FTP_FILENAME_BUF_LEN   1024
+
+#define SS_FTP_CLEAR                     1
+#define SS_FTP_SAFE                      2
+#define SS_FTP_CONFIDENTIAL              3
+#define SS_FTP_PRIVATE                   4
+
+#define SS_SEND_CHAIN             1
+#define SS_SEND_FILE              2 
+
+#define  SS_AGAIN                         NGX_AGAIN
+#define  SS_ERROR                         NGX_ERROR
+#define  SS_OK                            NGX_OK
+#define  SS_TRANSFER_COMPLETE             0 
+#define  SS_BUF_FULL                      -100 
+#define SS_FTP_REQUEST_DEFAULT_POOL_SIZE  1024*8
+#define SS_FTP_CMD_DEFAULT_BUF_LEN        1024
+
+#define assert(expr)                          \
+   ((expr)                              \
+   ? __ASSERT_VOID_CAST (0)                    \
+   : __assert_fail (__STRING(expr), __FILE__, __LINE__, __ASSERT_FUNCTION))
+
 
 
 typedef struct ss_ftp_request ss_ftp_request;
-typedef void (*ss_ftp_process_during_data_transmittion)(ngx_connection_t *c);
+typedef ngx_int_t (*ss_ftp_process_during_data_transmittion)(ngx_connection_t *c);
 typedef void (*ss_ftp_process_after_data_transmittion)(ngx_connection_t *c);
 
 typedef struct ss_ftp_send_receive_cmd {
@@ -30,8 +49,8 @@ typedef struct ss_ftp_send_receive_cmd {
   /* chain to be sent or reveived */
   ngx_chain_t       *chain;
   ngx_int_t          type; /* receive or send chain  */
-
-  ngx_buf_t         *read_buf;
+  ngx_int_t          cmd_arrived : 1;
+  ngx_int_t          data_link_send_type;
 
   ss_ftp_command    *cmd;
   /* file descrptor for file opened in retrieve commmand */
@@ -61,15 +80,23 @@ typedef struct ss_ftp_request {
   ngx_buf_t         *cmd_buf;
   ngx_int_t          skipped_tel_chars;
 
-  ngx_str_t         *current_dir;
+  char              *username;
+  char              *password;
 
+  ss_path_t          current_dir;
+  ss_path_t         *rename_from_filename;
   ngx_chain_t       *cmd_link_write;
 //  ngx_chain_t       *data_link_write;
+  ngx_int_t          protection_level;
+
+   void *pamh;
+
 } ss_ftp_request;
 
 
-char ss_ftp_home_dir_l[] = "\"/home/usher/ftp\"";
-char ss_ftp_home_dir[] = "/home/usher/ftp/";
+char *ss_ftp_home_dir_l;
+char *ss_ftp_home_dir;
+
 
 void ss_ftp_init_control_connection(ngx_connection_t *c);
 void ss_ftp_cmd_link_write(ngx_event_t *send);
@@ -78,4 +105,4 @@ void ss_ftp_cmd_link_add_chain(ss_ftp_request *r, ngx_chain_t *chain);
 ngx_int_t ss_ftp_data_link_add_chain(ngx_connection_t *c, ngx_chain_t *chain);
 void ss_ftp_init_data_connection(ngx_connection_t *c);
 
-#endif /* _SSFTP_H_  */
+#endif /* _SSFTP_H_ */
