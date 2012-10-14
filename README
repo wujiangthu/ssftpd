@@ -2,4 +2,5 @@
    Moreover, ssftp cares much about security from design to implement, making server safe as far as possible.
 
    PS : SSftpd is not released yet, but most of it has been implemented. It will be completed and released as soon as posssible :) 
-   Most ssftpd related code is under src/ftp.
+   
+  ** Most ssftpd related code is under src/ftp. **
