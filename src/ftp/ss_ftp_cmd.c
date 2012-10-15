@@ -8,10 +8,6 @@
 #define _SS_FTP_CMD_C_
 
 #include "ss_ftp_core.h"
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_event.h>
-#include <assert.h>
 #include <stddef.h>
 #include <dirent.h>
 #include <sys/types.h>
@@ -197,20 +193,37 @@ ss_ftp_user(ss_ftp_request *r)
 {
    assert(NULL != r);
 
+   ngx_pool_t     *pool;
    ngx_str_t      *arg;
    char           *user_name;
    struct pam_conv conversation;
    int             rc;
 
+   pool = ngx_create_pool(SS_FTP_CMD_DEFAULT_POOL_LEN, r->log);
+   if (NULL == pool) {
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in user command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+
+      return;
+   }
+
    arg = r->cmd_args->elts;
-   if ((user_name = ss_str_to_string(arg, r->pool)) == NULL) { 
-      ss_ftp_process_out_of_memory(r);
+   if ((user_name = ss_str_to_string(arg, pool)) == NULL) { 
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in user command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+      ngx_destroy_pool(pool);
+
       return;
    }
 
    ss_to_lower(arg->data, arg->len);
    if (strncmp((const char *) arg->data, "anonymous", sizeof("anonymous") - 1) == 0) {
        ss_ftp_reply(r, COMMAND_OK, COMMAND_OK_M);
+       ngx_destroy_pool(pool);
+
+       r->logged_in = SS_LOGGED_IN;
+       strncpy(r->expected_cmd, "any", sizeof("any"));
+
        return;
    }
 
@@ -233,11 +246,15 @@ ss_ftp_user(ss_ftp_request *r)
                         error code is : %d", user_name, rc);
 
         ss_ftp_reply(r, "451", "Request abort, server error in processing.");
+        ngx_destroy_pool(pool);
 
         return;
    }
 
    ss_ftp_reply(r, USER_NAME_OK_NEED_PASSWORD, USER_NAME_OK_NEED_PASSWORD_M);
+
+   strncpy(r->expected_cmd, "pass", sizeof("pass"));
+   r->cmd_pool = pool;
 }
 
 static void
@@ -245,15 +262,27 @@ ss_ftp_pass(ss_ftp_request *r)
 {
    assert(NULL != r);
 
+   ngx_pool_t *pool;
    ngx_str_t  *arg;
    char       *pwd;
    int         rc;
    int         result;
 
+   pool = ngx_create_pool(SS_FTP_CMD_DEFAULT_POOL_LEN, r->log);
+   if (NULL == pool) {
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in pass command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+
+      return;
+   }
+
    arg = r->cmd_args->elts;
-   pwd = ss_str_to_string(arg, r->pool);
+   pwd = ss_str_to_string(arg, pool);
    if (NULL == pwd) {
-      ss_ftp_process_out_of_memory(r);
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in pass command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+      ngx_destroy_pool(pool);
+
       return;
    }
 
@@ -293,9 +322,16 @@ ss_ftp_pass(ss_ftp_request *r)
       pam_end(r->pamh, rc);
       r->username = NULL;
       r->password = NULL;
+
+      ngx_destroy_pool(pool);
+
+      /* If authentication failed, begin with user command again */
+      strncpy(r->expected_cmd, "user", sizeof("user"));
+
       return;
    }
 
+   result = NGX_ERROR;
    rc = pam_acct_mgmt(r->pamh, 0); 
    switch (rc) {
 
@@ -317,6 +353,7 @@ ss_ftp_pass(ss_ftp_request *r)
 
    case PAM_SUCCESS:
         ss_ftp_reply(r, USER_LOGGED_IN, USER_LOGGED_IN_M);
+        result = NGX_OK;
         break;
 
    case PAM_USER_UNKNOWN:
@@ -324,45 +361,72 @@ ss_ftp_pass(ss_ftp_request *r)
         break;
    }
 
+   if (NGX_OK == result) {
+      r->logged_in = SS_LOGGED_IN;
+      strncpy(r->expected_cmd, "any", sizeof("any"));
+
+   } else {
+      assert(NGX_ERROR == result);
+      strncpy(r->expected_cmd, "user", sizeof("user"));
+   }
+
    pam_end(r->pamh, rc);
    r->username = NULL;
    r->password = NULL;
+
+   ngx_destroy_pool(pool);
 }
 
 static void 
 ss_ftp_cwd(ss_ftp_request *r)
 {
-   printf("%s\n", "enter cwd command******");
-
    assert(NULL != r);
 
+   ngx_pool_t   *pool;
    ngx_str_t    *arg;
    ngx_int_t     rc;
    ss_path_t    *home_dir;
    ss_path_t    *arg_dir;
-  
+
+   pool = ngx_create_pool(SS_FTP_CMD_DEFAULT_POOL_LEN, r->log);
+   if (NULL == pool) {
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in cwd command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+
+      return;
+   }
+
    arg = r->cmd_args->elts;
-   arg_dir = ss_ngx_str_to_path_alloc(r->pool, arg);
+   arg_dir = ss_ngx_str_to_path_alloc(pool, arg);
    if (NULL == arg_dir) {
-      ss_ftp_process_out_of_memory(r);
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in cwd command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+      ngx_destroy_pool(pool);
+
       return;
    }
 
    home_dir = &r->current_dir;
-   rc = ss_ftp_change_dir(r->pool, arg_dir, home_dir);
+   rc = ss_ftp_change_dir(pool, arg_dir, home_dir);
    if (OUT_OF_MEMORY == rc) {
-      ss_ftp_process_out_of_memory(r);
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in cwd command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+      ngx_destroy_pool(pool);
+
       return;
    }
 
    if (SS_FTP_FILE_NOT_FOUND == rc) {
       ss_ftp_reply(r, "550", "Directory not exists.");
+      ngx_destroy_pool(pool);
+
       return;
    }
 
    assert(SS_FTP_OK == rc);
 
    ss_ftp_reply(r, COMMAND_OK, COMMAND_OK_M);
+   ngx_destroy_pool(pool);
 }
 
 static ngx_int_t 
@@ -387,6 +451,7 @@ ss_ftp_change_dir(ngx_pool_t *pool, ss_path_t *arg_dir, ss_path_t *home_dir)
       return SS_FTP_FILE_NOT_FOUND;
    } 
 
+   /* check buffer length */
    ngx_memcpy(home_dir->path, dir->path, dir->psize); 
    home_dir->plen = dir->plen;
    home_dir->psize = dir->psize;
@@ -399,8 +464,6 @@ ss_ftp_change_dir(ngx_pool_t *pool, ss_path_t *arg_dir, ss_path_t *home_dir)
       home_dir->path[home_dir->plen] = '\0';
    }
 
-   printf("%s\n", "exit change dir******");
-
    return SS_FTP_OK;
 }
 
@@ -411,16 +474,28 @@ ss_ftp_cdup(ss_ftp_request *r)
 
    assert(NULL != r);
 
+   ngx_pool_t   *pool;
    ngx_int_t     rc;
    ss_path_t    *home_dir;
    ss_path_t     arg_dir;
    char          parent_dir[] = "..";
 
+   pool = ngx_create_pool(SS_FTP_CMD_DEFAULT_POOL_LEN, r->log);
+   if (NULL == pool) {
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in cdup command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+
+      return;
+   }
+
    ss_chars_to_path(parent_dir, &arg_dir);
    home_dir = &r->current_dir;
-   rc = ss_ftp_change_dir(r->pool, &arg_dir, home_dir);
+   rc = ss_ftp_change_dir(pool, &arg_dir, home_dir);
    if (OUT_OF_MEMORY == rc) {
-      ss_ftp_process_out_of_memory(r);
+      ngx_log_debug0(NGX_LOG_DEBUG_FTP, r->log, 0, "Out of memory in cdup command");
+      ss_ftp_reply(r, STORAGE_INSUFFICIENT, STORAGE_INSUFFICIENT_M);
+      ngx_destroy_pool(pool);
+
       return;
    }
 
@@ -428,15 +503,12 @@ ss_ftp_cdup(ss_ftp_request *r)
    assert(SS_FTP_OK == rc);
 
    ss_ftp_reply(r, COMMAND_OK, COMMAND_OK_M);
-   printf("%s\n", "exit cdup command******");
- 
+   ngx_destroy_pool(pool);
 }
 
 static void
 ss_ftp_quit(ss_ftp_request *r)
 {
-   printf("%s\n", "enter quit command******");
-
    assert(NULL != r);
 
    ngx_connection_t *c;
@@ -466,8 +538,9 @@ ss_ftp_pasv(ss_ftp_request *r)
 {
    printf("%s\n", "enter pasv command");
 
+   assert(NULL != r);
+
    ngx_connection_t  *data_listen_conn;
-   //ngx_connection_t  *control_conn;
    ngx_event_t       *rev;
    ngx_log_t         *log;
    ss_ftp_send_receive_cmd *srcmd;
@@ -565,7 +638,7 @@ ss_ftp_pasv(ss_ftp_request *r)
 
            /* TODO : address 0.0.0.0 find why  */
 
-            "Entering passive mode", '(', "10,199,46,164", p1, p2, ')');
+            "Entering passive mode", '(', "10,199,46,163", p1, p2, ')');
   
    ss_ftp_reply(r, ENTERING_PASSIVE_MODE, address_port_str);
    
@@ -623,6 +696,7 @@ ss_ftp_rmd(ss_ftp_request *r)
    assert(-1 == rc);
 
    ngx_log_debug1(NGX_LOG_DEBUG_FTP, r->connection->log, 0, "remove directory %s failed", dir->path);
+
    return;
 }
 
