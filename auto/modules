@@ -211,9 +211,9 @@ if [ $HTTP_ACCESS = YES ]; then
     HTTP_SRCS="$HTTP_SRCS $HTTP_ACCESS_SRCS"
 fi
 
-if [ $HTTP_LIMIT_CONN = YES ]; then
-    HTTP_MODULES="$HTTP_MODULES $HTTP_LIMIT_CONN_MODULE"
-    HTTP_SRCS="$HTTP_SRCS $HTTP_LIMIT_CONN_SRCS"
+if [ $HTTP_LIMIT_ZONE = YES ]; then
+    HTTP_MODULES="$HTTP_MODULES $HTTP_LIMIT_ZONE_MODULE"
+    HTTP_SRCS="$HTTP_SRCS $HTTP_LIMIT_ZONE_SRCS"
 fi
 
 if [ $HTTP_LIMIT_REQ = YES ]; then
@@ -345,11 +345,6 @@ if [ $HTTP_UPSTREAM_IP_HASH = YES ]; then
     HTTP_SRCS="$HTTP_SRCS $HTTP_UPSTREAM_IP_HASH_SRCS"
 fi
 
-if [ $HTTP_UPSTREAM_KEEPALIVE = YES ]; then
-    HTTP_MODULES="$HTTP_MODULES $HTTP_UPSTREAM_KEEPALIVE_MODULE"
-    HTTP_SRCS="$HTTP_SRCS $HTTP_UPSTREAM_KEEPALIVE_SRCS"
-fi
-
 if [ $HTTP_STUB_STATUS = YES ]; then
     have=NGX_STAT_STUB . auto/have
     HTTP_MODULES="$HTTP_MODULES ngx_http_stub_status_module"
@@ -395,12 +390,6 @@ if [ $USE_OPENSSL = YES ]; then
     modules="$modules $OPENSSL_MODULE"
     CORE_DEPS="$CORE_DEPS $OPENSSL_DEPS"
     CORE_SRCS="$CORE_SRCS $OPENSSL_SRCS"
-fi
-
-if [ $USE_PCRE = YES ]; then
-    modules="$modules $REGEX_MODULE"
-    CORE_DEPS="$CORE_DEPS $REGEX_DEPS"
-    CORE_SRCS="$CORE_SRCS $REGEX_SRCS"
 fi
 
 if [ $HTTP = YES ]; then
@@ -475,6 +464,10 @@ do
     echo "extern ngx_module_t  $mod;"         >> $NGX_MODULES_C
 done
 
+#todo make it more elegant
+echo "extern ngx_module_t ss_ftp_module;"    >> $NGX_MODULES_C
+echo "extern ngx_module_t ss_ftp_core_module;" >> $NGX_MODULES_C
+
 echo                                          >> $NGX_MODULES_C
 echo 'ngx_module_t *ngx_modules[] = {'        >> $NGX_MODULES_C
 
@@ -482,6 +475,11 @@ for mod in $modules
 do
     echo "    &$mod,"                         >> $NGX_MODULES_C
 done
+
+echo "&ss_ftp_module," >> $NGX_MODULES_C
+echo "&ss_ftp_core_module," >> $NGX_MODULES_C
+
+
 
 cat << END                                    >> $NGX_MODULES_C
     NULL

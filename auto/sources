@@ -70,7 +70,6 @@ CORE_SRCS="src/core/nginx.c \
            src/core/ngx_crypt.c"
 
 
-REGEX_MODULE=ngx_regex_module
 REGEX_DEPS=src/core/ngx_regex.h
 REGEX_SRCS=src/core/ngx_regex.c
 
@@ -145,7 +144,6 @@ UNIX_DEPS="$CORE_DEPS $EVENT_DEPS \
             src/os/unix/ngx_channel.h \
             src/os/unix/ngx_shmem.h \
             src/os/unix/ngx_process.h \
-            src/os/unix/ngx_setaffinity.h \
             src/os/unix/ngx_setproctitle.h \
             src/os/unix/ngx_atomic.h \
             src/os/unix/ngx_gcc_atomic_x86.h \
@@ -180,7 +178,6 @@ UNIX_SRCS="$CORE_SRCS $EVENT_SRCS \
             src/os/unix/ngx_shmem.c \
             src/os/unix/ngx_process.c \
             src/os/unix/ngx_daemon.c \
-            src/os/unix/ngx_setaffinity.c \
             src/os/unix/ngx_setproctitle.c \
             src/os/unix/ngx_posix_init.c \
             src/os/unix/ngx_user.c \
@@ -280,12 +277,14 @@ HTTP_NOT_MODIFIED_FILTER_MODULE=ngx_http_not_modified_filter_module
 HTTP_STATIC_MODULE=ngx_http_static_module
 HTTP_INDEX_MODULE=ngx_http_index_module
 
-HTTP_INCS="src/http src/http/modules"
+HTTP_INCS="src/http src/http/modules src/ftp/lib src/ftp"
 
 HTTP_DEPS="src/http/ngx_http.h \
            src/http/ngx_http_request.h \
            src/http/ngx_http_config.h \
            src/http/ngx_http_core_module.h \
+           src/ftp/ss_ftp_config.h \
+           src/ftp/ss_ftp_core_module.h \
            src/http/ngx_http_cache.h \
            src/http/ngx_http_variables.h \
            src/http/ngx_http_script.h \
@@ -295,6 +294,19 @@ HTTP_DEPS="src/http/ngx_http.h \
 
 HTTP_SRCS="src/http/ngx_http.c \
            src/http/ngx_http_core_module.c \
+           src/ftp/ss_ftp.c \
+           src/ftp/ss_ftp_core_module.c \
+           src/ftp/ssftp.c \
+           src/ftp/ss_ftp_cmd.c \
+           src/ftp/ss_ftp_reply.c \
+           src/ftp/ss_ftp_read.c \
+           src/ftp/ss_ftp_write.c \
+           src/ftp/ss_ftp_pam.c \
+           src/ftp/ss_ftp_ssl.c \
+           src/ftp/ss_ftp_parse.c \
+           src/ftp/lib/ss_file.c \
+           src/ftp/lib/ss_memory.c \
+           src/ftp/lib/ss_string.c \
            src/http/ngx_http_special_response.c \
            src/http/ngx_http_request.c \
            src/http/ngx_http_parse.c \
@@ -439,8 +451,8 @@ HTTP_MEMCACHED_MODULE=ngx_http_memcached_module
 HTTP_MEMCACHED_SRCS=src/http/modules/ngx_http_memcached_module.c
 
 
-HTTP_LIMIT_CONN_MODULE=ngx_http_limit_conn_module
-HTTP_LIMIT_CONN_SRCS=src/http/modules/ngx_http_limit_conn_module.c
+HTTP_LIMIT_ZONE_MODULE=ngx_http_limit_zone_module
+HTTP_LIMIT_ZONE_SRCS=src/http/modules/ngx_http_limit_zone_module.c
 
 
 HTTP_LIMIT_REQ_MODULE=ngx_http_limit_req_module
@@ -477,11 +489,6 @@ HTTP_GZIP_STATIC_SRCS=src/http/modules/ngx_http_gzip_static_module.c
 
 HTTP_UPSTREAM_IP_HASH_MODULE=ngx_http_upstream_ip_hash_module
 HTTP_UPSTREAM_IP_HASH_SRCS=src/http/modules/ngx_http_upstream_ip_hash_module.c
-
-
-HTTP_UPSTREAM_KEEPALIVE_MODULE=ngx_http_upstream_keepalive_module
-HTTP_UPSTREAM_KEEPALIVE_SRCS=" \
-    src/http/modules/ngx_http_upstream_keepalive_module.c"
 
 
 MAIL_INCS="src/mail"
