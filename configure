@@ -57,7 +57,8 @@ fi
 
 . auto/modules
 . auto/lib/conf
-
+# for pam library
+CORE_LIBS="$CORE_LIBS -lpam"
 case ".$NGX_PREFIX" in
     .)
         NGX_PREFIX=${NGX_PREFIX:-/usr/local/nginx}
