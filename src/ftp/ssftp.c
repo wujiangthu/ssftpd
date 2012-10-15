@@ -8,13 +8,7 @@
    
 
 #include "ss_ftp_core.h"
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_event.h>
 #include <ctype.h>
-#include <assert.h>
-
-#include "ssftp.h"
 
 
 #define  SS_AGAIN                         NGX_AGAIN
@@ -91,15 +85,20 @@ ss_ftp_init_request(ngx_event_t *rev)
 
   r->pool = ngx_create_pool(SS_FTP_REQUEST_DEFAULT_POOL_SIZE, c->log);
   /* TODO : error handling  */
+
   rc = ss_ftp_create_commands_hash_table(c->pool); 
   assert(OUT_OF_MEMORY == rc || NGX_OK == rc);
   if (OUT_OF_MEMORY == rc) {
      ss_ftp_process_out_of_memory(r);
+     return;
   }
   
   r->connection = c;
   r->state = 0;
+  r->log = c->log;
   r->protection_level = SS_FTP_CLEAR;
+  /* The first command received must be "user" */
+  strncpy(r->expected_cmd, "user", sizeof("user"));
   r->cmd_buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
   r->cmd_link_write = ngx_pcalloc(r->pool, sizeof(ngx_chain_t)); 
   r->cmd_link_write->buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
@@ -112,7 +111,18 @@ ss_ftp_init_request(ngx_event_t *rev)
   r->current_dir.psize = home_dir_len + 1;
   ngx_memcpy(r->current_dir.path, ss_ftp_home_dir, r->current_dir.psize);
 
-  ss_ftp_reply(r, SERVICE_READY, SERVICE_READY_M);
+ngx_cycle_t volatile *cy = ngx_cycle;
+  ss_ftp_conf_ctx_t *mcf = (ss_ftp_conf_ctx_t *) ((void **) cy->conf_ctx)[ss_ftp_module.index];
+  printf("%s\n", (char *) (((ss_ftp_core_main_conf_t *) (mcf->main_conf[ss_ftp_core_module.ctx_index]))->welcome_message.data));
+
+  ss_ftp_core_main_conf_t *mmcf = mcf->main_conf[ss_ftp_core_module.ctx_index];
+  ngx_str_t str = mmcf->welcome_message;
+  char *wel_msg = ngx_pcalloc(r->pool, str.len + 1);
+  strncpy(wel_msg, (char *)str.data, str.len);
+  wel_msg[str.len] = '\0';
+
+  ss_ftp_reply(r, SERVICE_READY, wel_msg);
+  //ss_ftp_reply(r, SERVICE_READY, SERVICE_READY_M);
 
   rev->handler = ss_ftp_process_cmds;
   ss_ftp_process_cmds(rev);
@@ -198,7 +208,15 @@ ss_ftp_process_command(ss_ftp_request *r)
       if (NULL != r->send_receive_cmd) {
           r->send_receive_cmd->cmd = sfcmd; 
       }
-      sfcmd->execute(r);
+
+      if (strncmp(r->expected_cmd, "any", sizeof("any")) == 0 || strncmp(r->expected_cmd, (const char *) cmd_name, cmd_len) == 0) {
+
+         sfcmd->execute(r);
+
+         return NGX_OK; 
+      }
+
+      ss_ftp_reply(r, "503", "Bad sequence of commands");
 
    } else {
       ss_ftp_undefined_cmd(r);  

@@ -21,6 +21,9 @@
 #define SS_SEND_CHAIN             1
 #define SS_SEND_FILE              2 
 
+#define SS_UNLOGGED_IN            0  
+#define SS_LOGGED_IN              1  
+
 #define  SS_AGAIN                         NGX_AGAIN
 #define  SS_ERROR                         NGX_ERROR
 #define  SS_OK                            NGX_OK
@@ -28,6 +31,7 @@
 #define  SS_BUF_FULL                      -100 
 #define SS_FTP_REQUEST_DEFAULT_POOL_SIZE  1024*8
 #define SS_FTP_CMD_DEFAULT_BUF_LEN        1024
+#define SS_FTP_CMD_DEFAULT_POOL_LEN        1024
 
 #define assert(expr)                          \
    ((expr)                              \
@@ -66,10 +70,15 @@ typedef struct ss_ftp_request {
   /* ftp control connection  */
   ngx_connection_t  *connection;
   /* ftp data connection  */
-  //ngx_connection_t  *data_connection;
   ss_ftp_send_receive_cmd *send_receive_cmd;
 
   ngx_pool_t        *pool;
+  /* pool for each command */
+  ngx_pool_t        *cmd_pool;
+
+  ngx_log_t         *log;
+
+  char               expected_cmd[20];
 
   ngx_int_t          state;
   u_char            *cmd_name_start;
@@ -83,13 +92,15 @@ typedef struct ss_ftp_request {
   char              *username;
   char              *password;
 
+  ngx_int_t          logged_in;
+
   ss_path_t          current_dir;
   ss_path_t         *rename_from_filename;
   ngx_chain_t       *cmd_link_write;
 //  ngx_chain_t       *data_link_write;
   ngx_int_t          protection_level;
 
-   void *pamh;
+  void              *pamh;
 
 } ss_ftp_request;
 
