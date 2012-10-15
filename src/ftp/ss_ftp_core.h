@@ -20,6 +20,10 @@
 #include "ss_ftp_ssl.h"
 #include "ss_ftp_pam.h"
 
+#include "ss_ftp_config.h"
+#include "ss_ftp_core_module.h"
+#include "ss_ftp.h"
+
 #include <stddef.h>
 #include <dirent.h>
 #include <sys/types.h>
