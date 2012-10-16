@@ -31,6 +31,7 @@ char ss_ftp_home_dir_bak[] = "/tmp/ftp/";
 
 void ss_ftp_init_control_connection(ngx_connection_t *c);
 static void ss_ftp_init_request(ngx_event_t *rev);
+ss_ftp_core_srv_conf_t *ss_ftp_find_virtual_server(ss_ftp_request *r, ngx_array_t *servers);
 void ss_ftp_process_cmds(ngx_event_t *rev);
 static ngx_int_t ss_ftp_process_command(ss_ftp_request *r); 
 void ss_ftp_init_data_connection(ngx_connection_t *c);
@@ -70,17 +71,24 @@ ss_ftp_init_control_connection(ngx_connection_t *c)
 static void
 ss_ftp_init_request(ngx_event_t *rev)
 {
+  assert(NULL != rev);
 
-  ngx_connection_t  *c;
-  ngx_int_t          rc;
-  ss_ftp_request    *r;
-  ngx_int_t          home_dir_len;
+  ss_ftp_conf_ctx_t          context;
+  ngx_array_t               *servers;
+  ngx_cycle_t volatile      *cy;
+  ss_ftp_core_srv_conf_t    *sconf;
+  ngx_connection_t          *c;
+  ngx_int_t                  rc;
+  ss_ftp_request            *r;
+  ngx_str_t                 *welcome_str;
+  char                      *welcome_msg;
 
   c = rev->data;
   assert(c != NULL && c->pool != NULL);
   ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->log, 0, "ftp:init ftp request");  
    
   r = ngx_pcalloc(c->pool, sizeof(ss_ftp_request));
+  /* TODO : error handling  */
   c->data = r;
 
   r->pool = ngx_create_pool(SS_FTP_REQUEST_DEFAULT_POOL_SIZE, c->log);
@@ -97,35 +105,111 @@ ss_ftp_init_request(ngx_event_t *rev)
   r->state = 0;
   r->log = c->log;
   r->protection_level = SS_FTP_CLEAR;
+
   /* The first command received must be "user" */
   strncpy(r->expected_cmd, "user", sizeof("user"));
   r->cmd_buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
+  if (NULL == r->cmd_buf) {
+     ss_ftp_process_out_of_memory(r);
+     return;
+  }
+
   r->cmd_link_write = ngx_pcalloc(r->pool, sizeof(ngx_chain_t)); 
+  if (NULL == r->cmd_link_write) {
+     ss_ftp_process_out_of_memory(r);
+     return;
+  }
+
   r->cmd_link_write->buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
+  if (NULL == r->cmd_link_write->buf) {
+     ss_ftp_process_out_of_memory(r);
+     return;
+  }
+
   r->cmd_link_write->next = NULL;
 
-  /* TODO : choose a better size  */
-  home_dir_len = strlen(ss_ftp_home_dir);
+  
+  /* Initialize ftp context */
+
+  cy = ngx_cycle;
+  context = *((ss_ftp_conf_ctx_t *) ((void **) cy->conf_ctx)[ss_ftp_module.index]);
+  servers = &((ss_ftp_core_main_conf_t *) (context.main_conf[ss_ftp_core_module.ctx_index]))->servers; 
+  sconf = ss_ftp_find_virtual_server(r, servers);
+  if (NULL == sconf) {
+     /* TODO : close connection, free memory */
+     /* make this log info to error log, not debug log file */
+     ngx_log_debug0(NGX_LOG_DEBUG_FTP, c->log, 0, "can not find virtual server");  
+     return;
+  }
+ 
+  r->server_ctx = sconf;
+  r->ctx = sconf->ctx;
+
+  /* TODO : choose a better size, avoid buffer overflow */
   r->current_dir.path  = ngx_pcalloc(r->pool, SS_FTP_FILENAME_BUF_LEN);
-  r->current_dir.plen  = home_dir_len;
-  r->current_dir.psize = home_dir_len + 1;
-  ngx_memcpy(r->current_dir.path, ss_ftp_home_dir, r->current_dir.psize);
+  r->current_dir.plen  = sconf->home_dir.len;
+  r->current_dir.psize = sconf->home_dir.len + 1;
+  ngx_memcpy(r->current_dir.path, sconf->home_dir.data, r->current_dir.plen);
+  r->current_dir.path[r->current_dir.plen] = '\0';
 
-ngx_cycle_t volatile *cy = ngx_cycle;
-  ss_ftp_conf_ctx_t *mcf = (ss_ftp_conf_ctx_t *) ((void **) cy->conf_ctx)[ss_ftp_module.index];
-  printf("%s\n", (char *) (((ss_ftp_core_main_conf_t *) (mcf->main_conf[ss_ftp_core_module.ctx_index]))->welcome_message.data));
-
-  ss_ftp_core_main_conf_t *mmcf = mcf->main_conf[ss_ftp_core_module.ctx_index];
-  ngx_str_t str = mmcf->welcome_message;
-  char *wel_msg = ngx_pcalloc(r->pool, str.len + 1);
-  strncpy(wel_msg, (char *)str.data, str.len);
-  wel_msg[str.len] = '\0';
-
-  ss_ftp_reply(r, SERVICE_READY, wel_msg);
-  //ss_ftp_reply(r, SERVICE_READY, SERVICE_READY_M);
+  welcome_str = &sconf->welcome_message;
+  welcome_msg = ss_str_to_string(welcome_str, r->pool);
+  if (NULL == welcome_msg) {
+     ss_ftp_process_out_of_memory(r);
+     return;
+  }
+  
+  ss_ftp_reply(r, SERVICE_READY, welcome_msg);
 
   rev->handler = ss_ftp_process_cmds;
   ss_ftp_process_cmds(rev);
+}
+
+ss_ftp_core_srv_conf_t *
+ss_ftp_find_virtual_server(ss_ftp_request *r, ngx_array_t *servers)
+{
+   assert(NULL != r);
+   assert(NULL != servers);
+
+   ngx_int_t                  num;
+   ss_ftp_core_srv_conf_t   **s;
+   ss_ftp_core_srv_conf_t    *scmf;
+   struct sockaddr_in         rsa;
+   socklen_t                  rsa_len = sizeof(struct sockaddr_in);
+   char                      *ip;
+   ngx_uint_t                 ip_len;
+   ngx_uint_t                 port;
+   int                        i;
+   int                        fd;
+
+   s = servers->elts;
+   num = servers->nelts;
+   fd = r->connection->fd;
+   //getpeername(fd, (struct sockaddr *)&rsa, &rsa_len);   
+   rsa_len = sizeof(struct sockaddr_in);
+   getsockname(fd, (struct sockaddr *)&rsa, &rsa_len);   
+   /* TODO : error handling*/
+   /* TODO : get to know mutilple ip address bind listen related things */
+   ip = inet_ntoa(rsa.sin_addr);
+   port = ntohs(rsa.sin_port);
+   ip_len = strlen(ip);
+
+   for (i = 0; i < num; i++) {
+       scmf = s[i];
+       if (scmf->ip.len != ip_len) {
+          continue; 
+       }
+
+       if (strncmp((const char *)scmf->ip.data, ip, ip_len) != 0) {
+          continue;
+       }
+
+       if (scmf->port == port) {
+          return scmf;
+       }
+   }
+
+   return NULL;
 }
 
 void 

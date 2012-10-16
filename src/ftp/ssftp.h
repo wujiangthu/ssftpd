@@ -67,6 +67,10 @@ typedef struct ss_ftp_send_receive_cmd {
 } ss_ftp_send_receive_cmd; 
 
 typedef struct ss_ftp_request {
+
+  void              *ctx;
+  void              *server_ctx;
+
   /* ftp control connection  */
   ngx_connection_t  *connection;
   /* ftp data connection  */
