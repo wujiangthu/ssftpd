@@ -11,6 +11,8 @@
 
 
 static char *ss_ftp_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ss_ftp_merge_servers(ngx_conf_t *cf, ss_ftp_core_main_conf_t *cmcf,
+        ss_ftp_module_t *module, ngx_uint_t ctx_index);
 
 
 ngx_uint_t  ss_ftp_max_module;
@@ -56,16 +58,16 @@ ss_ftp_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
    ngx_uint_t                   mi, m;
    ngx_conf_t                   pcf;
 //   ngx_http_module_t           *module;
-   ss_ftp_module_t           *module;
+   ss_ftp_module_t             *module;
 //   ngx_http_conf_ctx_t         *ctx;
-   ss_ftp_conf_ctx_t         *ctx;
+   ss_ftp_conf_ctx_t           *ctx;
 //   ngx_http_core_loc_conf_t    *clcf;
 //   ngx_http_core_srv_conf_t   **cscfp;
     /* TODO */
   // ss_ftp_core_srv_conf_t   **cscfp;
 //   ngx_http_core_main_conf_t   *cmcf;
    /* TODO */ 
- // ss_ftp_core_main_conf_t   *cmcf;
+   ss_ftp_core_main_conf_t     *cmcf;
  
    /* the main http context */
  
@@ -160,11 +162,6 @@ ss_ftp_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
    cf->cmd_type = SS_FTP_MAIN_CONF;
    rv = ngx_conf_parse(cf, NULL);
  
-printf("***********------------------****\n");
-ss_ftp_core_main_conf_t *mm=ctx->main_conf[ss_ftp_core_module.ctx_index];
-ss_ftp_core_srv_conf_t  *ss=mm->servers.elts;
-printf("%u\n", ss->port);
-
    if (rv != NGX_CONF_OK) {
        goto failed;
    }
@@ -172,7 +169,7 @@ printf("%u\n", ss->port);
    /* init ftp{} main_conf's, merge the server{}s' srv_conf's */
  
   /* TODO*/
-   //cmcf = ctx->main_conf[ss_ftp_core_module.ctx_index];
+   cmcf = ctx->main_conf[ss_ftp_core_module.ctx_index];
    //cscfp = cmcf->servers.elts;
  
    for (m = 0; ngx_modules[m]; m++) {
@@ -192,11 +189,10 @@ printf("%u\n", ss->port);
            }
        }
  
-      /* TODO : replace this function */
-//       rv = ngx_http_merge_servers(cf, cmcf, module, mi);
-//       if (rv != NGX_CONF_OK) {
-//           goto failed;
-//       }
+      rv = ss_ftp_merge_servers(cf, cmcf, module, mi);
+      if (rv != NGX_CONF_OK) {
+          goto failed;
+      }
    }
  
 //     if (ngx_http_init_headers_in_hash(cf, cmcf) != NGX_OK) {
@@ -249,6 +245,42 @@ printf("%u\n", ss->port);
     *cf = pcf;
  
     return rv;
+}
+
+static char *
+ss_ftp_merge_servers(ngx_conf_t *cf, ss_ftp_core_main_conf_t *cmcf,
+                     ss_ftp_module_t *module, ngx_uint_t ctx_index)
+{
+   char                        *rv;
+   ngx_uint_t                   s;
+   ss_ftp_conf_ctx_t           *ctx, saved;
+   ss_ftp_core_srv_conf_t     **cscfp;
+ 
+   cscfp = cmcf->servers.elts;
+   ctx = (ss_ftp_conf_ctx_t *) cf->ctx;
+   saved = *ctx;
+   rv = NGX_CONF_OK;
+
+   for (s = 0; s < cmcf->servers.nelts; s++) {
+
+        /* merge the server{}s' srv_conf's */
+
+        ctx->srv_conf = cscfp[s]->ctx->srv_conf;
+ 
+        if (module->merge_srv_conf) {
+            rv = module->merge_srv_conf(cf, saved.srv_conf[ctx_index],
+                                         cscfp[s]->ctx->srv_conf[ctx_index]);
+            if (rv != NGX_CONF_OK) {
+                goto failed;
+            }
+        }
+    } 
+
+   failed:
+ 
+   *ctx = saved;
+ 
+   return rv;
 }
 
 
