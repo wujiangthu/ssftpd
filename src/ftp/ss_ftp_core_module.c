@@ -226,13 +226,11 @@ ss_ftp_core_create_main_conf(ngx_conf_t *cf)
 static void *
 ss_ftp_core_create_srv_conf(ngx_conf_t *cf)
 {
-//printf("create srv conf called!******8");
    assert(NULL != cf);
 
    ss_ftp_core_srv_conf_t  *cscf;
 
    cscf = ngx_pcalloc(cf->pool, sizeof(ss_ftp_core_srv_conf_t));
-   //cscf = malloc(sizeof(ss_ftp_core_srv_conf_t));
    if (cscf == NULL) {
        return NULL;
    }

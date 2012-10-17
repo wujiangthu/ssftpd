@@ -24,6 +24,7 @@ typedef struct {
 
     ngx_str_t            welcome_message;
     ngx_str_t            home_dir;
+
     /* server context */
     ss_ftp_conf_ctx_t   *ctx;
 
