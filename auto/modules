@@ -467,6 +467,7 @@ done
 #todo make it more elegant
 echo "extern ngx_module_t ss_ftp_module;"    >> $NGX_MODULES_C
 echo "extern ngx_module_t ss_ftp_core_module;" >> $NGX_MODULES_C
+echo "extern ngx_module_t ss_ftp_ssl_module;" >> $NGX_MODULES_C
 
 echo                                          >> $NGX_MODULES_C
 echo 'ngx_module_t *ngx_modules[] = {'        >> $NGX_MODULES_C
@@ -478,6 +479,7 @@ done
 
 echo "&ss_ftp_module," >> $NGX_MODULES_C
 echo "&ss_ftp_core_module," >> $NGX_MODULES_C
+echo "&ss_ftp_ssl_module," >> $NGX_MODULES_C
 
 
 

@@ -277,7 +277,7 @@ HTTP_NOT_MODIFIED_FILTER_MODULE=ngx_http_not_modified_filter_module
 HTTP_STATIC_MODULE=ngx_http_static_module
 HTTP_INDEX_MODULE=ngx_http_index_module
 
-HTTP_INCS="src/http src/http/modules src/ftp/lib src/ftp"
+HTTP_INCS="src/http src/http/modules src/ftp/lib src/ftp src/ftp/modules"
 
 HTTP_DEPS="src/http/ngx_http.h \
            src/http/ngx_http_request.h \
@@ -302,11 +302,11 @@ HTTP_SRCS="src/http/ngx_http.c \
            src/ftp/ss_ftp_read.c \
            src/ftp/ss_ftp_write.c \
            src/ftp/ss_ftp_pam.c \
-           src/ftp/ss_ftp_ssl.c \
            src/ftp/ss_ftp_parse.c \
            src/ftp/lib/ss_file.c \
            src/ftp/lib/ss_memory.c \
            src/ftp/lib/ss_string.c \
+           src/ftp/modules/ss_ftp_ssl_module.c \
            src/http/ngx_http_special_response.c \
            src/http/ngx_http_request.c \
            src/http/ngx_http_parse.c \
