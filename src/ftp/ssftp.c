@@ -107,7 +107,9 @@ ss_ftp_init_request(ngx_event_t *rev)
   r->protection_level = SS_FTP_CLEAR;
 
   /* The first command received must be "user" */
-  strncpy(r->expected_cmd, "user", sizeof("user"));
+  //strncpy(r->expected_cmd, "user", sizeof("user"));
+  strncpy(r->expected_cmd, "any", sizeof("any"));
+
   r->cmd_buf = ngx_create_temp_buf(r->pool, SS_FTP_CMD_DEFAULT_BUF_LEN); 
   if (NULL == r->cmd_buf) {
      ss_ftp_process_out_of_memory(r);
