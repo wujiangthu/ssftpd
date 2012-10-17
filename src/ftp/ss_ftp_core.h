@@ -17,12 +17,12 @@
 #include "ss_ftp_read.h"
 #include "ss_ftp_write.h"
 #include "ss_ftp_parse.h"
-#include "ss_ftp_ssl.h"
 #include "ss_ftp_pam.h"
 
 #include "ss_ftp_config.h"
 #include "ss_ftp_core_module.h"
 #include "ss_ftp.h"
+#include "modules/ss_ftp_ssl_module.h"
 
 #include <stddef.h>
 #include <dirent.h>
