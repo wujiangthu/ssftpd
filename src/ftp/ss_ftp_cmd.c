@@ -63,6 +63,7 @@ static void ss_ftp_syst(ss_ftp_request *r);
 static int ss_ftp_get_absolute_realpath(ss_ftp_request *r, ss_path_t *arg_dir, 
                                   ss_path_t *home_dir, ss_path_t **reap_path);
 static void ss_ftp_auth(ss_ftp_request *r);
+void ss_ftp_process_cmds(ngx_event_t *rev);
 void ss_ftp_ssl_control_conn_handler(ngx_connection_t *c);
 static void ss_ftp_prot(ss_ftp_request *r);
 
@@ -1356,24 +1357,35 @@ ss_ftp_syst(ss_ftp_request *r)
 }
 
 
-void ss_ftp_process_cmds(ngx_event_t *rev);
 
 static void 
 ss_ftp_auth(ss_ftp_request *r)
 {
    assert(NULL != r);
 
-   ngx_ssl_t   ssl;
+   ngx_ssl_t                ssl;
+   ss_ftp_conf_ctx_t       *context;
+   ss_ftp_ssl_srv_conf_t   *scf;
+   ss_ftp_ssl_handlers_t   *handlers;
 
-   if (ss_ftp_ssl_create(r, &ssl) != NGX_OK) {
+   context = r->ctx;
+   scf = context->srv_conf[ss_ftp_ssl_module.ctx_index];
+   if (0 == scf->enable) {
+      ss_ftp_reply(r, "534", "Server ssl mode is off.");
+      return;
+   }
+
+   handlers = scf->handlers;
+
+   if (handlers->create_ssl(r, &ssl) != NGX_OK) {
       return;
    } 
 
-   if (ss_ftp_ssl_certificate(r, &ssl) != NGX_OK) {
+   if (handlers->certificate(r, &ssl) != NGX_OK) {
       return;
    } 
 
-   if (ss_ftp_ssl_create_connection(r->connection, &ssl) != NGX_OK) {
+   if (handlers->create_connection(r->connection, &ssl) != NGX_OK) {
       return;
    } 
 
@@ -1383,7 +1395,7 @@ ss_ftp_auth(ss_ftp_request *r)
    ss_ftp_reply(r, "234", "Enter ssl handshake..");
 
    /* Error logging performed in ngx_ssl_handshake(), no need another error logging */
-   ngx_ssl_handshake(r->connection);
+   handlers->handshake(r->connection);
 }
 
 void 
