@@ -1,5 +1,16 @@
    SSftpd is a high performance and very secure ftp server, based on nginx. Instead of creaeting a new process serving each ftp request, which is adopted by other ftp servers, ssftpd uses io mutilplexing such as epoll, kqueue, select, poll, dev/poll to deal with the incoming requests, saving a lot of memory resource and running time.
-   Moreover, ssftp cares much about security from design to implement, making server safe as far as possible.
+Moreover, ssftp cares much about security from design to implement, making server safe as far as possible.
+
+   Supported features:
+       ●  Very large number of concurrent users
+       ●  Multiple virtual servers based on IP
+       ●  Virtual users
+       ●  Standalone or xinetd mode
+       ●  FTPS (FTP over SSL)
+       ●  PAM authentication
+       ●  Cross platform
+       ●  etc…
+
 
    PS : SSftpd is not released yet, but most of it has been implemented. It will be completed and released as soon as posssible :) 
    
